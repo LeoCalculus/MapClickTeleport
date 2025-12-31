@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("MapClickTeleport")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+aa37eb4bc658c34acc4ac5bb92b122f808cb3816")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a6fe4f3a54e862bf1b810b140cbc4d1312b156ec")]
 [assembly: System.Reflection.AssemblyProductAttribute("MapClickTeleport")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MapClickTeleport")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
