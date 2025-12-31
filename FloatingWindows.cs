@@ -34,12 +34,13 @@ namespace MapClickTeleport
         private static float _displayStamina = -1f;
         private static float _displayMoney = -1f;
 
-        // FPS tracking
-        private static float _fpsUpdateTimer = 0f;
+        // FPS tracking - use actual system time for accuracy
+        private static DateTime _lastFPSUpdate = DateTime.Now;
         private static int _frameCount = 0;
         private static float _currentFPS = 60f;
-        public static int TargetFPS { get; set; } = 60; // 0 = unlimited
+        public static int TargetFPS { get; set; } = 60; // 0 = unlimited (vsync off)
         public static int CustomFPS { get; set; } = 144;
+        private static bool _vsyncEnabled = true;
         
         // Target values (actual current)
         private static float _targetHealthPct = 1f;
@@ -85,14 +86,15 @@ namespace MapClickTeleport
             if (Math.Abs(_targetStaminaPct - _displayStamina) < 0.005f) _displayStamina = _targetStaminaPct;
             if (Math.Abs(player.Money - _displayMoney) < 1f) _displayMoney = player.Money;
 
-            // Update FPS counter
+            // Update FPS counter using actual system time for accuracy
             _frameCount++;
-            _fpsUpdateTimer += dt;
-            if (_fpsUpdateTimer >= 0.5f) // Update FPS display twice per second
+            var now = DateTime.Now;
+            double elapsedSeconds = (now - _lastFPSUpdate).TotalSeconds;
+            if (elapsedSeconds >= 0.5) // Update FPS display twice per second
             {
-                _currentFPS = _frameCount / _fpsUpdateTimer;
+                _currentFPS = (float)(_frameCount / elapsedSeconds);
                 _frameCount = 0;
-                _fpsUpdateTimer = 0f;
+                _lastFPSUpdate = now;
             }
 
             if (ShowPlayerStats) DrawPlayerStats();
@@ -107,18 +109,36 @@ namespace MapClickTeleport
         /// </summary>
         public static void ApplyFPSLimit()
         {
-            if (TargetFPS == 0) // Unlimited
+            try
             {
-                Game1.game1.IsFixedTimeStep = false;
-                Game1.graphics.SynchronizeWithVerticalRetrace = false;
-                Game1.graphics.ApplyChanges();
+                if (TargetFPS == 0) // Unlimited - disable vsync and fixed timestep for max FPS
+                {
+                    _vsyncEnabled = false;
+                    Game1.game1.IsFixedTimeStep = false;
+                    Game1.graphics.SynchronizeWithVerticalRetrace = false;
+                    Game1.graphics.ApplyChanges();
+                }
+                else if (TargetFPS == 60) // Standard - enable vsync
+                {
+                    _vsyncEnabled = true;
+                    Game1.game1.IsFixedTimeStep = true;
+                    Game1.game1.TargetElapsedTime = TimeSpan.FromSeconds(1.0 / 60.0);
+                    Game1.graphics.SynchronizeWithVerticalRetrace = true;
+                    Game1.graphics.ApplyChanges();
+                }
+                else // Custom FPS (120, 144, etc.)
+                {
+                    _vsyncEnabled = false;
+                    Game1.game1.IsFixedTimeStep = true;
+                    // Set target elapsed time to achieve desired FPS
+                    Game1.game1.TargetElapsedTime = TimeSpan.FromSeconds(1.0 / TargetFPS);
+                    Game1.graphics.SynchronizeWithVerticalRetrace = false;
+                    Game1.graphics.ApplyChanges();
+                }
             }
-            else
+            catch
             {
-                Game1.game1.IsFixedTimeStep = true;
-                Game1.graphics.SynchronizeWithVerticalRetrace = false;
-                Game1.game1.TargetElapsedTime = TimeSpan.FromSeconds(1.0 / TargetFPS);
-                Game1.graphics.ApplyChanges();
+                // Fallback if graphics device not available
             }
         }
         
@@ -313,35 +333,65 @@ namespace MapClickTeleport
         {
             float rounding = WindowRounding;
 
+            // Enhanced blur/glow effect with more layers for frosted glass appearance
             if (PanelBlur > 0f)
             {
-                int blurLayers = 5;
+                // Outer glow layers (creates soft edge blur)
+                int blurLayers = (int)(PanelBlur * 3); // More layers based on blur strength
+                blurLayers = Math.Clamp(blurLayers, 3, 15);
+
                 for (int i = blurLayers; i >= 0; i--)
                 {
-                    float offset = i * PanelBlur;
-                    float alpha = 0.08f * WindowOpacity * (1f - (float)i / blurLayers);
-                    uint blurColor = ImGui.ColorConvertFloat4ToU32(new SVector4(0.05f, 0.05f, 0.1f, alpha));
+                    float offset = i * (PanelBlur * 0.8f);
+                    float layerProgress = (float)i / blurLayers;
+                    float alpha = 0.12f * WindowOpacity * (1f - layerProgress) * (PanelBlur / 5f);
+
+                    // Gradient from dark blue to transparent
+                    uint blurColor = ImGui.ColorConvertFloat4ToU32(new SVector4(
+                        0.02f + 0.03f * layerProgress,
+                        0.02f + 0.03f * layerProgress,
+                        0.05f + 0.05f * layerProgress,
+                        alpha
+                    ));
+
                     drawList.AddRectFilled(
                         new SVector2(pos.X - offset, pos.Y - offset),
                         new SVector2(pos.X + size.X + offset, pos.Y + size.Y + offset),
-                        blurColor, rounding + offset * 0.5f
+                        blurColor, rounding + offset * 0.3f
+                    );
+                }
+
+                // Inner frosted layers for depth
+                for (int i = 0; i < 3; i++)
+                {
+                    float inset = i * 1.5f;
+                    float alpha = 0.05f * WindowOpacity * (PanelBlur / 5f);
+                    uint frostColor = ImGui.ColorConvertFloat4ToU32(new SVector4(0.15f, 0.15f, 0.2f, alpha));
+                    drawList.AddRectFilled(
+                        new SVector2(pos.X + inset, pos.Y + inset),
+                        new SVector2(pos.X + size.X - inset, pos.Y + size.Y - inset),
+                        frostColor, rounding - inset * 0.2f
                     );
                 }
             }
 
-            uint bgColor = ImGui.ColorConvertFloat4ToU32(new SVector4(0.08f, 0.08f, 0.12f, WindowOpacity * 0.85f));
+            // Main background
+            uint bgColor = ImGui.ColorConvertFloat4ToU32(new SVector4(0.08f, 0.08f, 0.12f, WindowOpacity * 0.9f));
             drawList.AddRectFilled(pos, new SVector2(pos.X + size.X, pos.Y + size.Y), bgColor, rounding);
 
-            uint innerTop = ImGui.ColorConvertFloat4ToU32(new SVector4(0.15f, 0.15f, 0.2f, WindowOpacity * 0.2f));
+            // Top highlight gradient for glass effect
+            uint innerTop = ImGui.ColorConvertFloat4ToU32(new SVector4(0.2f, 0.2f, 0.25f, WindowOpacity * 0.25f));
             drawList.AddRectFilledMultiColor(
                 new SVector2(pos.X + 2, pos.Y + 2),
-                new SVector2(pos.X + size.X - 2, pos.Y + size.Y * 0.3f),
+                new SVector2(pos.X + size.X - 2, pos.Y + size.Y * 0.35f),
                 innerTop, innerTop, 0, 0
             );
 
-            uint borderColor = ImGui.ColorConvertFloat4ToU32(new SVector4(0.4f, 0.4f, 0.5f, WindowOpacity * 0.7f));
+            // Border with subtle glow
+            uint borderColor = ImGui.ColorConvertFloat4ToU32(new SVector4(0.45f, 0.45f, 0.55f, WindowOpacity * 0.8f));
             drawList.AddRect(pos, new SVector2(pos.X + size.X, pos.Y + size.Y), borderColor, rounding, ImDrawFlags.None, 1.5f);
 
+            // Title
             if (!string.IsNullOrEmpty(title))
             {
                 var titleSize = ImGui.CalcTextSize(title);
@@ -408,14 +458,12 @@ namespace MapClickTeleport
                 else if (_currentFPS >= 30) fpsColor = new SVector4(1f, 0.8f, 0.2f, 1f); // Yellow (ok)
                 else fpsColor = new SVector4(1f, 0.2f, 0.2f, 1f); // Red (bad)
 
-                // Display FPS with larger text
-                ImGui.PushFont(null); // Use default font (can customize later)
+                // Display FPS with accurate measurement
                 ImGui.TextColored(fpsColor, $"{_currentFPS:F1} FPS");
-                ImGui.PopFont();
 
-                // Show target FPS
-                string targetText = TargetFPS == 0 ? "Unlimited" : $"Target: {TargetFPS}";
-                ImGui.TextColored(new SVector4(0.7f, 0.7f, 0.7f, 1f), targetText);
+                // Show VSync status instead of confusing "target"
+                string vsyncText = _vsyncEnabled ? "VSync: ON" : "VSync: OFF";
+                ImGui.TextColored(new SVector4(0.7f, 0.7f, 0.7f, 1f), vsyncText);
 
                 ImGui.End();
             }

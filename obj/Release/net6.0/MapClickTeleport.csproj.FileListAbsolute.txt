@@ -14,3 +14,4 @@ D:\Code\c#\stardew-valley-utilities\MapClickTeleport\bin\Release\net6.0\runtimes
 D:\Code\c#\stardew-valley-utilities\MapClickTeleport\bin\Release\net6.0\runtimes\win-x64\native\cimgui.dll
 D:\Code\c#\stardew-valley-utilities\MapClickTeleport\bin\Release\net6.0\runtimes\win-x86\native\cimgui.dll
 D:\Code\c#\stardew-valley-utilities\MapClickTeleport\obj\Release\net6.0\MapClick.36B620B1.Up2Date
+D:\Code\c#\stardew-valley-utilities\MapClickTeleport\obj\Release\net6.0\MapClickTeleport.sourcelink.json

@@ -273,29 +273,56 @@ namespace MapClickTeleport
 
         // Store original passability state for no-clip
         private static bool _originalIgnoreCollisions = false;
+        private static bool _wasNoClipEnabled = false;
 
         /// <summary>
         /// Prefix for Farmer.MovePosition - enables no-clip
         /// </summary>
         private static void Farmer_MovePosition_Prefix(Farmer __instance, GameTime time, xTile.Dimensions.Rectangle viewport, GameLocation currentLocation)
         {
-            if (!NoClip) return;
             if (__instance != Game1.player) return;
 
+            // Check if NoClip was just disabled - restore collision
+            if (_wasNoClipEnabled && !NoClip)
+            {
+                __instance.ignoreCollisions = false;
+                _wasNoClipEnabled = false;
+                return;
+            }
+
+            if (!NoClip) return;
+
+            // Enable no-clip
             _originalIgnoreCollisions = __instance.ignoreCollisions;
             __instance.ignoreCollisions = true;
+            _wasNoClipEnabled = true;
         }
 
         /// <summary>
-        /// Postfix for Farmer.MovePosition - restores collision state
+        /// Postfix for Farmer.MovePosition - restores collision state when NoClip disabled
         /// </summary>
         private static void Farmer_MovePosition_Postfix(Farmer __instance)
         {
-            if (!NoClip) return;
             if (__instance != Game1.player) return;
 
-            // Keep ignoreCollisions true while no-clip is enabled
-            // (don't restore, keep it enabled)
+            // If NoClip was just disabled, make sure collision is restored
+            if (!NoClip && _wasNoClipEnabled)
+            {
+                __instance.ignoreCollisions = false;
+                _wasNoClipEnabled = false;
+            }
+        }
+
+        /// <summary>
+        /// Call this when NoClip toggle changes to immediately restore collision
+        /// </summary>
+        public static void OnNoClipToggled(bool enabled)
+        {
+            if (!enabled && Game1.player != null)
+            {
+                Game1.player.ignoreCollisions = false;
+                _wasNoClipEnabled = false;
+            }
         }
 
         /// <summary>
@@ -489,99 +516,53 @@ namespace MapClickTeleport
         }
 
         /// <summary>
-        /// Spawns an invisible monster that attacks the target farmer and immediately dies.
-        /// This method should sync damage in multiplayer because monster attacks are server-authoritative!
+        /// Applies damage to target farmer using invisible explosion.
+        /// Explosions sync properly in multiplayer because they go through the game's network layer!
         /// </summary>
         private static void SpawnInvisibleAttacker(Farmer target, int damage)
         {
             try
             {
-                // Create a Green Slime (weak, common monster)
-                var monster = new GreenSlime(target.Position, 0); // 0 = easy difficulty
+                // Use game's explosion system - this syncs in multiplayer!
+                // The explosion is created at the target's position
+                Vector2 targetTile = target.Tile;
 
-                // Make it invisible and passive
-                monster.Scale = 0.001f; // Nearly invisible (can't be 0 or damage might not work)
-                monster.isGlider.Value = true; // Flies, doesn't collide with terrain
-                monster.speed = 0; // Can't move
-                monster.moveTowardPlayerThreshold.Value = -1; // NEVER move toward players
+                // Create explosion at target's position
+                // Parameters: tile, radius, who caused it, damageFarmers, damage_amount
+                // Small radius (1) to minimize collateral damage to terrain
+                Game1.currentLocation.explode(
+                    targetTile,
+                    1, // radius - small to minimize terrain damage
+                    Game1.player, // who caused it
+                    damageFarmers: true, // THIS IS KEY - damages farmers!
+                    damage_amount: damage
+                );
 
-                // CRITICAL: Disable ALL attack behaviors
-                monster.isHardModeMonster.Value = false;
-                monster.focusedOnFarmers = false; // Don't auto-target
-                monster.DamageToFarmer = 0; // Can't hurt anyone on collision
+                _monitor?.Log($"[PVP] Triggered explosion at {target.Name}'s position for {damage} damage", LogLevel.Debug);
 
-                // Make the spawner (you) immune to this specific monster
-                // by marking it as not aggressive
-                monster.wildernessFarmMonster = false;
-
-                // Set extremely high health so it survives any attacks
-                monster.Health = 999999;
-                monster.MaxHealth = 999999;
-                monster.resilience.Value = 100; // Reduced from 999 - too high might cause issues
-
-                // Position at target's location (required for damage to sync!)
-                monster.Position = target.Position;
-
-                // Add to location (this might sync to host!)
-                Game1.currentLocation.characters.Add(monster);
-
-                _monitor?.Log($"[PVP] Spawned passive invisible slime at {target.Name}'s position", LogLevel.Debug);
-
-                // Schedule attack and cleanup
-                // Phase 1: Trigger collision/attack (10ms delay - very short!)
-                Game1.delayedActions.Add(new DelayedAction(10, () =>
-                {
-                    try
-                    {
-                        if (monster != null && Game1.currentLocation.characters.Contains(monster))
-                        {
-                            // ONLY damage the target farmer, never anyone else!
-                            if (target != null && target != Game1.player)
-                            {
-                                // Deal damage with the monster as the source
-                                // Having the monster as the damage source should sync in multiplayer!
-                                target.takeDamage(damage, overrideParry: false, damager: monster);
-
-                                // Play hit sound for feedback
-                                Game1.playSound("hitEnemy");
-
-                                _monitor?.Log($"[PVP] Monster dealt {damage} damage to {target.Name}", LogLevel.Debug);
-                            }
-
-                            // Phase 2: Remove monster IMMEDIATELY after attack (30ms later)
-                            Game1.delayedActions.Add(new DelayedAction(30, () =>
-                            {
-                                try
-                                {
-                                    if (monster != null && Game1.currentLocation.characters.Contains(monster))
-                                    {
-                                        // Remove without death animation to stay invisible
-                                        Game1.currentLocation.characters.Remove(monster);
-                                        _monitor?.Log($"[PVP] Removed invisible attacker", LogLevel.Debug);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    _monitor?.Log($"[PVP] Error removing monster: {ex.Message}", LogLevel.Warn);
-                                }
-                            }));
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _monitor?.Log($"[PVP] Error in monster attack: {ex.Message}", LogLevel.Warn);
-                        // Try to clean up anyway
-                        try
-                        {
-                            if (monster != null) Game1.currentLocation.characters.Remove(monster);
-                        }
-                        catch { }
-                    }
-                }));
+                // Play hit sound
+                Game1.playSound("hitEnemy");
             }
             catch (Exception ex)
             {
-                _monitor?.Log($"[PVP] Failed to spawn invisible attacker: {ex.Message}", LogLevel.Error);
+                _monitor?.Log($"[PVP] Failed to create explosion: {ex.Message}", LogLevel.Error);
+
+                // Fallback to direct damage (client-side only, won't sync)
+                try
+                {
+                    target.takeDamage(damage, false, null);
+                    Game1.playSound("hitEnemy");
+
+                    // Show damage number locally
+                    Game1.currentLocation.debris.Add(new Debris(
+                        damage,
+                        new Vector2(target.Position.X, target.Position.Y - 32),
+                        Color.Red,
+                        1f,
+                        target
+                    ));
+                }
+                catch { }
             }
         }
 

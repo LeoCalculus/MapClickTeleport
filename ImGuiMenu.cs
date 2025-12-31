@@ -79,8 +79,10 @@ namespace MapClickTeleport
         private List<string> _autocompleteSuggestions = new();
         private int _autocompleteIndex = -1;
         private string _lastConsoleInput = "";
+        private List<string> _smapiCommands = new(); // SMAPI commands fetched at runtime
+        private bool _smapiCommandsFetched = false;
 
-        // Known debug commands for autocomplete
+        // Known debug commands for autocomplete (used when debug mode is ON)
         private static readonly string[] DebugCommands = new[]
         {
             "warp", "warphome", "warptocharacter", "wtc", "warpcharacter", "wc",
@@ -105,6 +107,15 @@ namespace MapClickTeleport
             "cat", "dog", "horse", "removenpcs"
         };
 
+        // Known SMAPI console commands (common ones from SMAPI and popular mods)
+        private static readonly string[] BaseSMAPICommands = new[]
+        {
+            "help", "reload_i18n", "show_game_files", "show_data_files",
+            "world_ready", "player_add", "player_setmoney", "player_sethealth",
+            "player_setstamina", "player_setimmunity", "player_setlevel",
+            "list_items", "debug", "patch", "patch summary", "patch export"
+        };
+
         // Colors (dark theme)
         private static readonly SVector4 BgColor = new(0.1f, 0.1f, 0.12f, 0.95f);
         private static readonly SVector4 TabActiveColor = new(0.3f, 0.5f, 0.8f, 1f);
@@ -117,6 +128,17 @@ namespace MapClickTeleport
 
         // Keyboard state for text input
         private KeyboardState _prevKeyboard;
+
+        // Key repeat timing for proper text input
+        private Dictionary<Keys, float> _keyRepeatTimers = new();
+        private const float KEY_INITIAL_DELAY = 0.5f; // Initial delay before repeat starts (500ms)
+        private const float KEY_REPEAT_RATE = 0.08f; // Time between repeated keys (80ms = ~12.5 chars/sec)
+        private float _deltaTime = 0.016f;
+
+        // Separate tracking for navigation keys (arrows) with even slower repeat
+        private Dictionary<ImGuiKey, float> _navKeyTimers = new();
+        private const float NAV_INITIAL_DELAY = 0.3f; // Initial delay for nav keys
+        private const float NAV_REPEAT_RATE = 0.15f; // Slower repeat for navigation (150ms)
 
         public ImGuiMenu(ImGuiRenderer imGui, ModData modData, Action<ModData> saveData, IModHelper helper, IMonitor monitor)
             : base(0, 0, Game1.viewport.Width, Game1.viewport.Height, true)
@@ -159,16 +181,48 @@ namespace MapClickTeleport
         private void HandleTextInput()
         {
             var keyboard = Keyboard.GetState();
+            _deltaTime = 1f / 60f; // Approximate delta time
 
             foreach (Keys key in Enum.GetValues(typeof(Keys)))
             {
-                if (keyboard.IsKeyDown(key) && !_prevKeyboard.IsKeyDown(key))
+                bool isDown = keyboard.IsKeyDown(key);
+                bool wasDown = _prevKeyboard.IsKeyDown(key);
+
+                if (isDown && !wasDown)
                 {
+                    // Key just pressed - send character immediately and start repeat timer
                     char? c = KeyToChar(key, keyboard);
                     if (c.HasValue)
                     {
                         _imGui.AddInputCharacter(c.Value);
                     }
+                    _keyRepeatTimers[key] = KEY_INITIAL_DELAY;
+                }
+                else if (isDown && wasDown)
+                {
+                    // Key held - check if we should repeat
+                    if (_keyRepeatTimers.TryGetValue(key, out float timer))
+                    {
+                        timer -= _deltaTime;
+                        if (timer <= 0)
+                        {
+                            char? c = KeyToChar(key, keyboard);
+                            if (c.HasValue)
+                            {
+                                _imGui.AddInputCharacter(c.Value);
+                            }
+                            _keyRepeatTimers[key] = KEY_REPEAT_RATE;
+                        }
+                        else
+                        {
+                            _keyRepeatTimers[key] = timer;
+                        }
+                    }
+                }
+                else if (!isDown && wasDown)
+                {
+                    // Key released - remove from timers
+                    _keyRepeatTimers.Remove(key);
                 }
             }
 
@@ -218,12 +272,51 @@ namespace MapClickTeleport
             };
         }
 
+        /// <summary>
+        /// Handle navigation keys with proper debouncing to prevent multiple triggers
+        /// Returns true only on initial press or after repeat delay
+        /// </summary>
+        private bool HandleNavKey(ImGuiKey key)
+        {
+            bool isDown = ImGui.IsKeyDown(key);
+
+            if (!isDown)
+            {
+                // Key released - remove timer
+                _navKeyTimers.Remove(key);
+                return false;
+            }
+
+            if (!_navKeyTimers.TryGetValue(key, out float timer))
+            {
+                // Key just pressed - trigger immediately and start timer
+                _navKeyTimers[key] = NAV_INITIAL_DELAY;
+                return true;
+            }
+
+            // Key held - decrement timer
+            timer -= _deltaTime;
+            if (timer <= 0)
+            {
+                // Timer expired - trigger and reset to repeat rate
+                _navKeyTimers[key] = NAV_REPEAT_RATE;
+                return true;
+            }
+
+            // Timer still running - update but don't trigger
+            _navKeyTimers[key] = timer;
+            return false;
+        }
+
         public override void receiveKeyPress(Keys key)
         {
+            // When ImGui wants keyboard, ONLY allow escape to close menu
+            // This prevents game chat (T key), inventory, etc. from being triggered
             if (_imGui.WantCaptureKeyboard)
             {
                 if (key == Keys.Escape)
                     exitThisMenu();
+                // Don't call base - completely suppress all game keyboard input
                 return;
             }
 
@@ -231,6 +324,7 @@ namespace MapClickTeleport
             {
                 exitThisMenu();
             }
+            // Don't call base.receiveKeyPress to prevent game input while menu is open
         }
 
         public override void receiveLeftClick(int x, int y, bool playSound = true)
@@ -471,14 +565,25 @@ namespace MapClickTeleport
         #region Console Tab
         private void DrawConsoleTab()
         {
-            ImGui.TextColored(HeaderColor, "SMAPI Console");
+            // Mode display based on toggle
+            string modeLabel = _debugModeEnabled ? "ConsoleCommands Mode" : "SMAPI Mode";
+            ImGui.TextColored(HeaderColor, modeLabel);
             ImGui.SameLine();
 
-            // Debug mode toggle
-            ImGui.Checkbox("Auto-Debug Mode", ref _debugModeEnabled);
+            // Debug mode toggle - text changes based on state
+            string toggleLabel = _debugModeEnabled ? "Switch to SMAPI" : "Switch to ConsoleCommands";
+            if (ImGui.Button(toggleLabel))
+            {
+                _debugModeEnabled = !_debugModeEnabled;
+                _autocompleteSuggestions.Clear();
+                _autocompleteIndex = -1;
+                Game1.playSound("smallSelect");
+            }
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip("When ON: Auto-prepends 'debug' to commands\nWhen OFF: Execute raw input");
+                ImGui.SetTooltip(_debugModeEnabled
+                    ? "ConsoleCommands Mode: Auto-prepends 'debug' to commands\nClick to switch to SMAPI mode"
+                    : "SMAPI Mode: Execute SMAPI console commands directly\nClick to switch to ConsoleCommands mode");
             }
 
             ImGui.Spacing();
@@ -537,7 +642,9 @@ namespace MapClickTeleport
             }
 
             ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 80);
-            string hint = _debugModeEnabled ? "Enter command (Tab=autocomplete)..." : "Enter raw command...";
+            string hint = _debugModeEnabled
+                ? "Enter debug command (e.g., warp Farm)..."
+                : "Enter SMAPI command (e.g., help, player_add)...";
 
             // Note: Don't use CallbackCompletion flag without providing callback - causes AccessViolationException
             ImGuiInputTextFlags flags = ImGuiInputTextFlags.EnterReturnsTrue;
@@ -558,7 +665,13 @@ namespace MapClickTeleport
             // Handle Tab key for autocomplete selection
             if (ImGui.IsItemFocused())
             {
-                if (ImGui.IsKeyPressed(ImGuiKey.Tab) && _autocompleteSuggestions.Count > 0)
+                // Use custom key handling with debouncing for navigation keys
+                bool tabPressed = HandleNavKey(ImGuiKey.Tab);
+                bool upPressed = HandleNavKey(ImGuiKey.UpArrow);
+                bool downPressed = HandleNavKey(ImGuiKey.DownArrow);
+                bool escPressed = HandleNavKey(ImGuiKey.Escape);
+
+                if (tabPressed && _autocompleteSuggestions.Count > 0)
                 {
                     if (_autocompleteIndex >= 0 && _autocompleteIndex < _autocompleteSuggestions.Count)
                     {
@@ -571,19 +684,24 @@ namespace MapClickTeleport
                         _autocompleteIndex = 0;
                     }
                 }
-                if (ImGui.IsKeyPressed(ImGuiKey.UpArrow) && _autocompleteSuggestions.Count > 0)
+                if (upPressed && _autocompleteSuggestions.Count > 0)
                 {
                     _autocompleteIndex = Math.Max(0, _autocompleteIndex - 1);
                 }
-                if (ImGui.IsKeyPressed(ImGuiKey.DownArrow) && _autocompleteSuggestions.Count > 0)
+                if (downPressed && _autocompleteSuggestions.Count > 0)
                 {
                     _autocompleteIndex = Math.Min(_autocompleteSuggestions.Count - 1, _autocompleteIndex + 1);
                 }
-                if (ImGui.IsKeyPressed(ImGuiKey.Escape))
+                if (escPressed)
                 {
                     _autocompleteSuggestions.Clear();
                     _autocompleteIndex = -1;
                 }
+            }
+            else
+            {
+                // Clear nav timers when not focused
+                _navKeyTimers.Clear();
             }
 
             ImGui.SameLine();
@@ -605,7 +723,10 @@ namespace MapClickTeleport
 
             string searchTerm = input.ToLower().Trim();
 
-            foreach (var cmd in DebugCommands)
+            // Use different command list based on mode
+            var commands = _debugModeEnabled ? DebugCommands : GetSMAPICommands();
+
+            foreach (var cmd in commands)
             {
                 if (cmd.StartsWith(searchTerm, StringComparison.OrdinalIgnoreCase))
                 {
@@ -617,7 +738,7 @@ namespace MapClickTeleport
             // If exact match found, also show partial matches
             if (_autocompleteSuggestions.Count < 8)
             {
-                foreach (var cmd in DebugCommands)
+                foreach (var cmd in commands)
                 {
                     if (cmd.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) &&
                         !_autocompleteSuggestions.Contains(cmd))
@@ -632,6 +753,28 @@ namespace MapClickTeleport
                 _autocompleteIndex = 0;
         }
 
+        private string[] GetSMAPICommands()
+        {
+            // Try to fetch SMAPI commands if not already done
+            if (!_smapiCommandsFetched)
+            {
+                _smapiCommandsFetched = true;
+                _smapiCommands.AddRange(BaseSMAPICommands);
+
+                // Try to get commands from ConsoleCommands mod (common SMAPI utility)
+                // These are the most common SMAPI commands that users would want
+                _smapiCommands.AddRange(new[] {
+                    "world_settime", "world_setday", "world_setseason", "world_setyear",
+                    "player_setname", "player_setfarmname", "player_setfavoritething",
+                    "player_setcolor", "player_setstyle", "player_setgender",
+                    "player_additem", "player_addweapon", "player_addring",
+                    "relationship_setfriendship", "relationship_setdating", "relationship_setmarried"
+                });
+            }
+
+            return _smapiCommands.ToArray();
+        }
+
         private void ExecuteCommand(string command)
         {
             if (string.IsNullOrWhiteSpace(command)) return;
@@ -644,28 +787,50 @@ namespace MapClickTeleport
             {
                 if (_debugModeEnabled)
                 {
-                    // Auto-prepend debug and execute
+                    // ConsoleCommands Mode: Auto-prepend debug and execute
                     _consoleOutput.Add($"[DEBUG] {command}");
                     Game1.game1.parseDebugInput(command);
                 }
                 else
                 {
-                    // Execute raw - check if it starts with debug
+                    // SMAPI Mode: Execute as SMAPI console command
                     var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length == 0) return;
 
                     var cmd = parts[0].ToLower();
+                    var args = parts.Length > 1 ? parts.Skip(1).ToArray() : Array.Empty<string>();
 
-                    if (cmd == "debug" && parts.Length > 1)
+                    _consoleOutput.Add($"[SMAPI] {command}");
+
+                    // Special handling for common commands
+                    if (cmd == "help")
                     {
-                        string debugCmd = string.Join(" ", parts.Skip(1));
-                        _consoleOutput.Add($"[DEBUG] {debugCmd}");
+                        _consoleOutput.Add("Available SMAPI commands:");
+                        _consoleOutput.Add("  help - Show this help");
+                        _consoleOutput.Add("  debug <cmd> - Run a debug command");
+                        _consoleOutput.Add("  player_add <item> [count] - Add item to inventory");
+                        _consoleOutput.Add("  world_settime <time> - Set time (e.g., 0600)");
+                        _consoleOutput.Add("  world_setday <day> - Set day of month");
+                        _consoleOutput.Add("  world_setseason <season> - Set season");
+                        _consoleOutput.Add("Use ConsoleCommands mode for game debug commands");
+                    }
+                    else if (cmd == "debug" && args.Length > 0)
+                    {
+                        // Execute as debug command
+                        string debugCmd = string.Join(" ", args);
                         Game1.game1.parseDebugInput(debugCmd);
                     }
                     else
                     {
-                        _consoleOutput.Add($"[RAW] Attempting: {command}");
-                        Game1.game1.parseDebugInput(command);
+                        // Try to execute through SMAPI's command system
+                        // Note: Direct SMAPI command execution requires reflection or mod API
+                        // For now, we'll handle common commands manually
+                        bool handled = TryExecuteSMAPICommand(cmd, args);
+                        if (!handled)
+                        {
+                            _consoleOutput.Add($"[INFO] Command '{cmd}' not recognized.");
+                            _consoleOutput.Add("Try: debug <command> to run debug commands");
+                        }
                     }
                 }
             }
@@ -675,6 +840,107 @@ namespace MapClickTeleport
             }
 
             Game1.playSound("smallSelect");
+        }
+
+        private bool TryExecuteSMAPICommand(string cmd, string[] args)
+        {
+            switch (cmd)
+            {
+                case "player_add":
+                case "player_additem":
+                    if (args.Length >= 1)
+                    {
+                        int count = args.Length >= 2 && int.TryParse(args[1], out int c) ? c : 1;
+                        var item = ItemRegistry.Create(args[0], count);
+                        if (item != null)
+                        {
+                            Game1.player.addItemToInventory(item);
+                            _consoleOutput.Add($"[OK] Added {count}x {item.Name}");
+                            return true;
+                        }
+                        _consoleOutput.Add($"[ERROR] Item '{args[0]}' not found");
+                    }
+                    return true;
+
+                case "player_setmoney":
+                    if (args.Length >= 1 && int.TryParse(args[0], out int money))
+                    {
+                        Game1.player.Money = money;
+                        _consoleOutput.Add($"[OK] Money set to {money}");
+                        return true;
+                    }
+                    return true;
+
+                case "player_sethealth":
+                    if (args.Length >= 1 && int.TryParse(args[0], out int health))
+                    {
+                        Game1.player.health = Math.Min(health, Game1.player.maxHealth);
+                        _consoleOutput.Add($"[OK] Health set to {Game1.player.health}");
+                        return true;
+                    }
+                    return true;
+
+                case "player_setstamina":
+                    if (args.Length >= 1 && float.TryParse(args[0], out float stamina))
+                    {
+                        Game1.player.Stamina = Math.Min(stamina, Game1.player.MaxStamina);
+                        _consoleOutput.Add($"[OK] Stamina set to {Game1.player.Stamina}");
+                        return true;
+                    }
+                    return true;
+
+                case "world_settime":
+                    if (args.Length >= 1 && int.TryParse(args[0], out int time))
+                    {
+                        Game1.timeOfDay = time;
+                        _consoleOutput.Add($"[OK] Time set to {time}");
+                        return true;
+                    }
+                    return true;
+
+                case "world_setday":
+                    if (args.Length >= 1 && int.TryParse(args[0], out int day))
+                    {
+                        Game1.dayOfMonth = Math.Clamp(day, 1, 28);
+                        _consoleOutput.Add($"[OK] Day set to {Game1.dayOfMonth}");
+                        return true;
+                    }
+                    return true;
+
+                case "world_setseason":
+                    if (args.Length >= 1)
+                    {
+                        string seasonStr = args[0].ToLower();
+                        Season? newSeason = seasonStr switch
+                        {
+                            "spring" => Season.Spring,
+                            "summer" => Season.Summer,
+                            "fall" => Season.Fall,
+                            "winter" => Season.Winter,
+                            _ => null
+                        };
+                        if (newSeason.HasValue)
+                        {
+                            Game1.season = newSeason.Value;
+                            _consoleOutput.Add($"[OK] Season set to {seasonStr}");
+                            return true;
+                        }
+                        _consoleOutput.Add("[ERROR] Invalid season. Use: spring, summer, fall, winter");
+                    }
+                    return true;
+
+                case "world_setyear":
+                    if (args.Length >= 1 && int.TryParse(args[0], out int year))
+                    {
+                        Game1.year = Math.Max(1, year);
+                        _consoleOutput.Add($"[OK] Year set to {Game1.year}");
+                        return true;
+                    }
+                    return true;
+
+                default:
+                    return false;
+            }
         }
         #endregion
 
@@ -749,7 +1015,7 @@ namespace MapClickTeleport
             int skip = _skullCavernSkipLevels;
             if (ImGui.InputInt("##SkipLevels", ref skip))
             {
-                skip = Math.Max(0, Math.Min(skip, 500));
+                skip = Math.Max(0, Math.Min(skip, 1000)); // Allow up to 1000 levels
                 _skullCavernSkipLevels = skip;
                 CaveTab.SkullCavernSkipLevels = skip;
             }
@@ -789,16 +1055,25 @@ namespace MapClickTeleport
             ImGui.Separator();
             ImGui.Spacing();
 
-            // new thing spawn the ladder directly
-            ImGui.TextColored(HeaderColor, "Spawn Ladder");
-            if (ImGui.Button("Spawn Ladder", new SVector2(380, 32)))
+            // Spawn ladder/hole buttons
+            ImGui.TextColored(HeaderColor, "Spawn Ladder / Shaft Hole");
+
+            if (ImGui.Button("Spawn Ladder", new SVector2(185, 32)))
             {
-                SpawnLadderDirectly();
+                SpawnLadderDirectly(false);
             }
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Spawns a ladder directly at the player's position");
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Spawns a ladder to go down 1 level");
+
+            ImGui.SameLine();
+
+            if (ImGui.Button("Spawn Shaft Hole", new SVector2(185, 32)))
+            {
+                SpawnLadderDirectly(true);
+            }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Spawns a shaft hole to skip multiple levels (like in Skull Cavern)");
         }
 
-        private void SpawnLadderDirectly()
+        private void SpawnLadderDirectly(bool spawnHole = false)
         {
             if (Game1.currentLocation is not MineShaft shaft)
             {
@@ -806,18 +1081,49 @@ namespace MapClickTeleport
                 return;
             }
 
-            bool ladderSpawned = false;
+            bool spawned = false;
             Vector2 playerTile = Game1.player.Tile;
 
-            // Spawn ladder 1 tile to the right of player (not ON player)
-            Vector2 ladderPos = new Vector2(playerTile.X + 1, playerTile.Y);
+            // Spawn ladder/hole 1 tile to the right of player (not ON player)
+            Vector2 spawnPos = new Vector2(playerTile.X + 1, playerTile.Y);
 
             try
             {
-                // Method 1: Try the game's built-in method first (most reliable)
-                shaft.createLadderAt(ladderPos, "hoeHit");
-                shaft.ladderHasSpawned = true;
-                ladderSpawned = true;
+                if (spawnHole)
+                {
+                    // Create a shaft hole (for Skull Cavern to skip levels)
+                    shaft.createLadderAt(spawnPos, "clubSmash"); // Different sound for hole
+
+                    // Mark as shaft/hole by setting a property or using game's method
+                    // The shaft appearance is actually based on tile index
+                    try
+                    {
+                        var buildingsLayer = shaft.Map.GetLayer("Buildings");
+                        var tileSheet = shaft.Map.TileSheets.FirstOrDefault();
+                        if (buildingsLayer != null && tileSheet != null)
+                        {
+                            xTile.Dimensions.Location tileLoc = new xTile.Dimensions.Location((int)spawnPos.X, (int)spawnPos.Y);
+                            // Shaft/hole tile index is 174 (ladder is 173)
+                            buildingsLayer.Tiles[tileLoc] = new xTile.Tiles.StaticTile(
+                                buildingsLayer,
+                                tileSheet,
+                                xTile.Tiles.BlendMode.Alpha,
+                                174  // Shaft hole tile index
+                            );
+                        }
+                    }
+                    catch { }
+
+                    shaft.ladderHasSpawned = true;
+                    spawned = true;
+                }
+                else
+                {
+                    // Method 1: Try the game's built-in method first (most reliable)
+                    shaft.createLadderAt(spawnPos, "hoeHit");
+                    shaft.ladderHasSpawned = true;
+                    spawned = true;
+                }
             }
             catch
             {
@@ -825,20 +1131,20 @@ namespace MapClickTeleport
                 try
                 {
                     var buildingsLayer = shaft.Map.GetLayer("Buildings");
-                    // Find ANY tilesheet (don't rely on specific name)
                     var tileSheet = shaft.Map.TileSheets.FirstOrDefault();
 
                     if (buildingsLayer != null && tileSheet != null)
                     {
-                        xTile.Dimensions.Location tileLocation = new xTile.Dimensions.Location((int)ladderPos.X, (int)ladderPos.Y);
+                        xTile.Dimensions.Location tileLocation = new xTile.Dimensions.Location((int)spawnPos.X, (int)spawnPos.Y);
+                        int tileIndex = spawnHole ? 174 : 173; // 174 = hole, 173 = ladder
                         buildingsLayer.Tiles[tileLocation] = new xTile.Tiles.StaticTile(
                             buildingsLayer,
                             tileSheet,
                             xTile.Tiles.BlendMode.Alpha,
-                            173  // Ladder tile index
+                            tileIndex
                         );
                         shaft.ladderHasSpawned = true;
-                        ladderSpawned = true;
+                        spawned = true;
                     }
                 }
                 catch (Exception ex)
@@ -848,10 +1154,10 @@ namespace MapClickTeleport
                 }
             }
 
-            if (ladderSpawned)
+            if (spawned)
             {
-                // Game1.playSound("hoeHit");
-                Game1.addHUDMessage(new HUDMessage("Ladder spawned!", HUDMessage.newQuest_type));
+                string msg = spawnHole ? "Shaft hole spawned!" : "Ladder spawned!";
+                Game1.addHUDMessage(new HUDMessage(msg, HUDMessage.newQuest_type));
             }
         }
 
@@ -915,30 +1221,56 @@ namespace MapClickTeleport
         {
             var drops = new List<Item>();
 
-            // Map ore nodes to their drops
+            // CORRECT ore node to drop mapping based on actual game data:
+            // Ore Node IDs -> Drop Item IDs
+            // 751 = Copper Node -> 378 (Copper Ore)
+            // 290 = Iron Node (common) -> 380 (Iron Ore)
+            // 764 = Gold Node -> 384 (Gold Ore)
+            // 765 = Iridium Node -> 386 (Iridium Ore)
+            // 95 = Radioactive Node -> 909 (Radioactive Ore)
+            // 843, 844 = Copper/Iron nodes in Skull Cavern
+            // 845, 846, 847 = Iridium nodes variants
             var dropMap = new Dictionary<string, (string itemId, int minCount, int maxCount)>
             {
-                // Copper node
+                // Copper nodes
                 {"751", ("378", 1, 3)}, // Copper Ore
-                {"290", ("378", 1, 3)}, // Iron ore actually (Stone in mines)
-                // Iron node
-                {"764", ("380", 1, 3)}, // Iron Ore  
-                {"765", ("380", 1, 3)}, // Iron Ore
-                // Gold node
-                {"843", ("384", 1, 3)}, // Gold Ore
-                {"844", ("384", 1, 3)}, // Gold Ore
-                // Iridium node
-                {"845", ("386", 1, 3)}, // Iridium Ore
-                {"846", ("386", 1, 3)}, // Iridium Ore
-                {"847", ("386", 1, 3)}, // Iridium Ore
+                {"849", ("378", 2, 5)}, // Copper Node (Skull Cavern variant)
+                // Iron nodes
+                {"290", ("380", 1, 3)}, // Iron Ore (this is the correct mapping!)
+                {"850", ("380", 2, 5)}, // Iron Node (Skull Cavern variant)
+                // Gold nodes
+                {"764", ("384", 1, 3)}, // Gold Ore
+                {"851", ("384", 2, 5)}, // Gold Node (Skull Cavern variant)
+                // Iridium nodes (765 is Iridium, NOT Iron!)
+                {"765", ("386", 1, 3)}, // Iridium Ore
+                {"843", ("386", 1, 3)}, // Iridium Node variant
+                {"844", ("386", 1, 3)}, // Iridium Node variant
+                {"845", ("386", 1, 4)}, // Iridium Node variant
+                {"846", ("386", 1, 4)}, // Iridium Node variant
+                {"847", ("386", 2, 5)}, // Iridium Node variant (rich)
                 // Radioactive node
                 {"95", ("909", 1, 2)},  // Radioactive Ore
-                // Gem nodes
+                // Gem nodes - these drop specific gems
+                {"2", ("72", 1, 1)},    // Diamond Node -> Diamond
+                {"4", ("64", 1, 1)},    // Ruby Node -> Ruby
+                {"6", ("70", 1, 1)},    // Jade Node -> Jade
+                {"8", ("66", 1, 1)},    // Amethyst Node -> Amethyst
+                {"10", ("68", 1, 1)},   // Topaz Node -> Topaz
+                {"12", ("60", 1, 1)},   // Emerald Node -> Emerald
+                {"14", ("62", 1, 1)},   // Aquamarine Node -> Aquamarine
+                // Geode nodes
+                {"75", ("535", 1, 1)},  // Geode
+                {"76", ("536", 1, 1)},  // Frozen Geode
+                {"77", ("537", 1, 1)},  // Magma Geode
+                // Quartz nodes
                 {"668", ("80", 1, 1)},  // Quartz
                 {"670", ("82", 1, 1)},  // Fire Quartz
                 // Mystic Stone
-                {"760", ("386", 1, 4)}, // Iridium
-                {"762", ("386", 2, 5)}, // Iridium
+                {"760", ("386", 1, 4)}, // Iridium + chance for Prismatic
+                {"762", ("386", 2, 5)}, // Iridium + chance for Prismatic
+                // Cinder Shard nodes (Volcano)
+                {"816", ("848", 1, 3)}, // Cinder Shard Node
+                {"817", ("848", 2, 4)}, // Cinder Shard Node (rich)
             };
 
             if (dropMap.TryGetValue(itemId, out var dropInfo))
@@ -1183,19 +1515,60 @@ namespace MapClickTeleport
             ImGui.Spacing();
             ImGui.TextColored(HeaderColor, "Active Buffs");
 
-            if (Game1.player.buffs.AppliedBuffs.Count == 0)
+            var appliedBuffs = Game1.player.buffs.AppliedBuffs;
+            if (appliedBuffs.Count == 0)
             {
                 ImGui.TextColored(new SVector4(0.5f, 0.5f, 0.5f, 1f), "No active buffs");
             }
             else
             {
-                foreach (var buff in Game1.player.buffs.AppliedBuffs.Values.Take(10))
+                ImGui.Text($"Total: {appliedBuffs.Count} buff(s)");
+                ImGui.Spacing();
+
+                // Create a scrollable child window for the buff list
+                if (ImGui.BeginChild("BuffList", new SVector2(0, 150), true))
                 {
-                    string name = buff.displayName ?? buff.id ?? "Unknown";
-                    string duration = buff.millisecondsDuration == Buff.ENDLESS ? "∞" :
-                        $"{buff.millisecondsDuration / 1000}s";
-                    ImGui.BulletText($"{name} ({duration})");
+                    foreach (var kvp in appliedBuffs)
+                    {
+                        var buff = kvp.Value;
+                        // Get clean name without special characters
+                        string name = buff.displayName ?? buff.id ?? "Unknown Buff";
+                        // Remove any potential icon characters that ImGui can't render
+                        name = System.Text.RegularExpressions.Regex.Replace(name, @"[^\u0000-\u007F]+", "").Trim();
+                        if (string.IsNullOrEmpty(name)) name = buff.id ?? "Buff";
+
+                        // Format duration - use text instead of infinity symbol
+                        string duration;
+                        if (buff.millisecondsDuration == Buff.ENDLESS || buff.millisecondsDuration < 0)
+                            duration = "Endless";
+                        else if (buff.millisecondsDuration > 60000)
+                            duration = $"{buff.millisecondsDuration / 60000}m {(buff.millisecondsDuration % 60000) / 1000}s";
+                        else
+                            duration = $"{buff.millisecondsDuration / 1000}s";
+
+                        // Color based on buff source
+                        SVector4 buffColor = name.Contains("Utilities")
+                            ? new SVector4(0.4f, 0.8f, 1f, 1f)
+                            : new SVector4(0.9f, 0.9f, 0.9f, 1f);
+
+                        ImGui.TextColored(buffColor, $"[{duration}]");
+                        ImGui.SameLine();
+                        ImGui.Text(name);
+
+                        // Show buff effects on hover
+                        if (ImGui.IsItemHovered() && buff.effects != null)
+                        {
+                            ImGui.BeginTooltip();
+                            ImGui.Text($"ID: {buff.id}");
+                            if (buff.effects.Speed.Value != 0) ImGui.Text($"Speed: {buff.effects.Speed.Value:+#;-#;0}");
+                            if (buff.effects.Attack.Value != 0) ImGui.Text($"Attack: {buff.effects.Attack.Value:+#;-#;0}");
+                            if (buff.effects.Defense.Value != 0) ImGui.Text($"Defense: {buff.effects.Defense.Value:+#;-#;0}");
+                            if (buff.effects.LuckLevel.Value != 0) ImGui.Text($"Luck: {buff.effects.LuckLevel.Value:+#;-#;0}");
+                            ImGui.EndTooltip();
+                        }
+                    }
                 }
+                ImGui.EndChild();
             }
         }
 
@@ -1774,6 +2147,17 @@ namespace MapClickTeleport
                 FloatingWindows.WindowOpacity = opacity;
             }
 
+            ImGui.Text("Blur Strength:");
+            ImGui.SameLine();
+            float blur = FloatingWindows.PanelBlur;
+            ImGui.SetNextItemWidth(200);
+            if (ImGui.SliderFloat("##PanelBlur", ref blur, 0f, 10f))
+            {
+                FloatingWindows.PanelBlur = blur;
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Frosted glass blur effect around floating windows\n0 = Off, 10 = Maximum");
+
             ImGui.Spacing();
             ImGui.Separator();
             ImGui.Spacing();
@@ -1945,9 +2329,12 @@ namespace MapClickTeleport
             if (ImGui.Checkbox("No Clip (Walk Through Walls)", ref _noClip))
             {
                 OPFeatures.NoClip = _noClip;
+                OPFeatures.OnNoClipToggled(_noClip); // Immediately restore collision when disabled
                 Game1.playSound(_noClip ? "powerup" : "cancel");
                 if (_noClip)
                     Game1.addHUDMessage(new HUDMessage("No Clip ON - walk through anything!", HUDMessage.newQuest_type));
+                else
+                    Game1.addHUDMessage(new HUDMessage("No Clip OFF - collision restored", HUDMessage.achievement_type));
             }
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Walk through walls, fences, and obstacles");

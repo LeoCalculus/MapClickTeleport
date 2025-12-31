@@ -39,20 +39,26 @@ namespace MapClickTeleport
         private void Initialize()
         {
             var io = ImGui.GetIO();
-            
+
             // Configure ImGui
             io.ConfigFlags |= ImGuiConfigFlags.NavEnableKeyboard;
             io.BackendFlags |= ImGuiBackendFlags.HasMouseCursors;
-            
+
+            // Configure key repeat timing for backspace and other keys
+            // Default ImGui values: KeyRepeatDelay=0.25, KeyRepeatRate=0.05 (too fast!)
+            // Set slower repeat rate to prevent deleting multiple characters
+            io.KeyRepeatDelay = 0.4f;  // Initial delay before repeat starts (400ms)
+            io.KeyRepeatRate = 0.08f;  // Time between repeated keys (80ms = ~12 chars/sec)
+
             // Setup key mappings
             SetupKeyMappings();
-            
+
             // Build font atlas with high quality settings
             BuildFontAtlas();
-            
+
             // Create rendering resources
             CreateGraphicsResources();
-            
+
             _initialized = true;
         }
 

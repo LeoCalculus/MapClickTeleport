@@ -188,6 +188,26 @@ namespace MapClickTeleport
             if (!Context.IsWorldReady)
                 return;
 
+            // CRITICAL: Suppress most keyboard input when our ImGui menu is open
+            // This prevents T, /, and other keys from triggering game actions like chat
+            // EXCEPT: ESC key must pass through so the menu can close itself
+            if (Game1.activeClickableMenu is ImGuiMenu)
+            {
+                // Don't suppress ESC - let it pass through to close the menu
+                if (e.Button == SButton.Escape)
+                {
+                    // Let ESC through to ImGuiMenu.receiveKeyPress
+                    return;
+                }
+
+                // Suppress all other keyboard keys (not mouse buttons) to prevent game input
+                if (e.Button.TryGetKeyboard(out _))
+                {
+                    Helper.Input.Suppress(e.Button);
+                    return;
+                }
+            }
+
             // Right Shift = Open Stardew Utilities Menu (ImGui)
             if (e.Button == SButton.RightShift && Game1.activeClickableMenu == null)
             {
@@ -364,16 +384,35 @@ namespace MapClickTeleport
         {
             var drops = new List<Item>();
 
+            // CORRECT ore node to drop mapping
             var dropMap = new Dictionary<string, (string itemId, int min, int max)>
             {
-                {"751", ("378", 1, 3)}, // Copper
-                {"290", ("380", 1, 3)}, // Iron
-                {"764", ("380", 1, 3)}, {"765", ("380", 1, 3)},
-                {"843", ("384", 1, 3)}, {"844", ("384", 1, 3)}, // Gold
-                {"845", ("386", 1, 3)}, {"846", ("386", 1, 3)}, {"847", ("386", 1, 3)}, // Iridium
-                {"95", ("909", 1, 2)}, // Radioactive
-                {"668", ("80", 1, 1)}, {"670", ("82", 1, 1)}, // Gems
-                {"760", ("386", 1, 4)}, {"762", ("386", 2, 5)}, // Mystic
+                // Copper nodes
+                {"751", ("378", 1, 3)}, // Copper Ore
+                {"849", ("378", 2, 5)}, // Copper (Skull Cavern)
+                // Iron nodes
+                {"290", ("380", 1, 3)}, // Iron Ore (correct!)
+                {"850", ("380", 2, 5)}, // Iron (Skull Cavern)
+                // Gold nodes
+                {"764", ("384", 1, 3)}, // Gold Ore
+                {"851", ("384", 2, 5)}, // Gold (Skull Cavern)
+                // Iridium nodes (765 = Iridium, NOT Iron!)
+                {"765", ("386", 1, 3)}, // Iridium Ore
+                {"843", ("386", 1, 3)}, {"844", ("386", 1, 3)}, // Iridium variants
+                {"845", ("386", 1, 4)}, {"846", ("386", 1, 4)}, {"847", ("386", 2, 5)}, // Iridium variants
+                // Radioactive
+                {"95", ("909", 1, 2)}, // Radioactive Ore
+                // Gems
+                {"2", ("72", 1, 1)}, {"4", ("64", 1, 1)}, {"6", ("70", 1, 1)}, // Diamond, Ruby, Jade
+                {"8", ("66", 1, 1)}, {"10", ("68", 1, 1)}, {"12", ("60", 1, 1)}, {"14", ("62", 1, 1)}, // More gems
+                // Geodes
+                {"75", ("535", 1, 1)}, {"76", ("536", 1, 1)}, {"77", ("537", 1, 1)},
+                // Quartz
+                {"668", ("80", 1, 1)}, {"670", ("82", 1, 1)},
+                // Mystic Stone
+                {"760", ("386", 1, 4)}, {"762", ("386", 2, 5)},
+                // Cinder Shard (Volcano)
+                {"816", ("848", 1, 3)}, {"817", ("848", 2, 4)},
             };
 
             if (dropMap.TryGetValue(itemId, out var info))
