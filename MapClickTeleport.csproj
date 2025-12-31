@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <EnableHarmony>true</EnableHarmony>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <BundleExtraAssemblies>ThirdParty</BundleExtraAssemblies>
+    <GamePath>E:\SteamLibrary\steamapps\common\Stardew Valley</GamePath>
+  </PropertyGroup>
+
+  <!-- Exclude the C++ reference project folder from compilation -->
+  <ItemGroup>
+    <Compile Remove="stardew-valley-imgui\**" />
+    <Content Remove="stardew-valley-imgui\**" />
+    <EmbeddedResource Remove="stardew-valley-imgui\**" />
+    <None Remove="stardew-valley-imgui\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Pathoschild.Stardew.ModBuildConfig" Version="4.4.0" />
+    <PackageReference Include="ImGui.NET" Version="1.89.9.3" />
+  </ItemGroup>
+
+  <!-- Include ImGui native library as content to copy -->
+  <ItemGroup>
+    <Content Include="$(NuGetPackageRoot)imgui.net\1.89.9.3\runtimes\win-x64\native\cimgui.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>cimgui.dll</Link>
+    </Content>
+  </ItemGroup>
+
+</Project>
