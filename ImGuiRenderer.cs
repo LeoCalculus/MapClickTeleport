@@ -26,6 +26,16 @@ namespace MapClickTeleport
         private readonly List<int> _keys = new();
         private bool _initialized = false;
 
+        // Track previous keyboard state to detect key press/release events
+        private KeyboardState _prevKeyboard;
+
+        // Backspace rate limiting
+        private bool _backspaceWasDown = false;
+        private float _backspaceTimer = 0f;
+        private const float BACKSPACE_INITIAL_DELAY = 0.4f; // 400ms before repeat
+        private const float BACKSPACE_REPEAT_RATE = 0.08f;  // 80ms between repeats
+        private DateTime _lastFrameTime = DateTime.Now;
+
         public ImGuiRenderer(GraphicsDevice graphicsDevice)
         {
             _graphicsDevice = graphicsDevice;
@@ -47,8 +57,8 @@ namespace MapClickTeleport
             // Configure key repeat timing for backspace and other keys
             // Default ImGui values: KeyRepeatDelay=0.25, KeyRepeatRate=0.05 (too fast!)
             // Set slower repeat rate to prevent deleting multiple characters
-            io.KeyRepeatDelay = 0.4f;  // Initial delay before repeat starts (400ms)
-            io.KeyRepeatRate = 0.08f;  // Time between repeated keys (80ms = ~12 chars/sec)
+            io.KeyRepeatDelay = 60.00f;  // Initial delay before repeat starts (400ms)
+            io.KeyRepeatRate = 60.00f;  // Time between repeated keys (80ms = ~12 chars/sec)
 
             // Setup key mappings
             SetupKeyMappings();
@@ -213,47 +223,105 @@ namespace MapClickTeleport
         private void UpdateInput()
         {
             var io = ImGui.GetIO();
-            
+
             // Mouse
             var mouse = Mouse.GetState();
             io.MousePos = new System.Numerics.Vector2(mouse.X, mouse.Y);
             io.MouseDown[0] = mouse.LeftButton == ButtonState.Pressed;
             io.MouseDown[1] = mouse.RightButton == ButtonState.Pressed;
             io.MouseDown[2] = mouse.MiddleButton == ButtonState.Pressed;
-            
+
             // Mouse wheel
             int scrollDelta = mouse.ScrollWheelValue - _scrollWheelValue;
             io.MouseWheel = scrollDelta > 0 ? 1 : scrollDelta < 0 ? -1 : 0;
             _scrollWheelValue = mouse.ScrollWheelValue;
-            
-            // Keyboard
+
+            // Keyboard - only send key events on state CHANGE, not every frame
+            // This allows ImGui's KeyRepeatDelay/KeyRepeatRate to work properly
             var keyboard = Keyboard.GetState();
-            
-            io.AddKeyEvent(ImGuiKey.Tab, keyboard.IsKeyDown(Keys.Tab));
-            io.AddKeyEvent(ImGuiKey.LeftArrow, keyboard.IsKeyDown(Keys.Left));
-            io.AddKeyEvent(ImGuiKey.RightArrow, keyboard.IsKeyDown(Keys.Right));
-            io.AddKeyEvent(ImGuiKey.UpArrow, keyboard.IsKeyDown(Keys.Up));
-            io.AddKeyEvent(ImGuiKey.DownArrow, keyboard.IsKeyDown(Keys.Down));
-            io.AddKeyEvent(ImGuiKey.PageUp, keyboard.IsKeyDown(Keys.PageUp));
-            io.AddKeyEvent(ImGuiKey.PageDown, keyboard.IsKeyDown(Keys.PageDown));
-            io.AddKeyEvent(ImGuiKey.Home, keyboard.IsKeyDown(Keys.Home));
-            io.AddKeyEvent(ImGuiKey.End, keyboard.IsKeyDown(Keys.End));
-            io.AddKeyEvent(ImGuiKey.Delete, keyboard.IsKeyDown(Keys.Delete));
-            io.AddKeyEvent(ImGuiKey.Backspace, keyboard.IsKeyDown(Keys.Back));
-            io.AddKeyEvent(ImGuiKey.Enter, keyboard.IsKeyDown(Keys.Enter));
-            io.AddKeyEvent(ImGuiKey.Escape, keyboard.IsKeyDown(Keys.Escape));
-            io.AddKeyEvent(ImGuiKey.Space, keyboard.IsKeyDown(Keys.Space));
-            io.AddKeyEvent(ImGuiKey.A, keyboard.IsKeyDown(Keys.A));
-            io.AddKeyEvent(ImGuiKey.C, keyboard.IsKeyDown(Keys.C));
-            io.AddKeyEvent(ImGuiKey.V, keyboard.IsKeyDown(Keys.V));
-            io.AddKeyEvent(ImGuiKey.X, keyboard.IsKeyDown(Keys.X));
-            io.AddKeyEvent(ImGuiKey.Y, keyboard.IsKeyDown(Keys.Y));
-            io.AddKeyEvent(ImGuiKey.Z, keyboard.IsKeyDown(Keys.Z));
-            
-            // Modifiers
+
+            // Helper to send key event only on state change
+            void SendKeyIfChanged(ImGuiKey imguiKey, Keys xnaKey)
+            {
+                bool isDown = keyboard.IsKeyDown(xnaKey);
+                bool wasDown = _prevKeyboard.IsKeyDown(xnaKey);
+                if (isDown != wasDown)
+                {
+                    io.AddKeyEvent(imguiKey, isDown);
+                }
+            }
+
+            SendKeyIfChanged(ImGuiKey.Tab, Keys.Tab);
+            SendKeyIfChanged(ImGuiKey.LeftArrow, Keys.Left);
+            SendKeyIfChanged(ImGuiKey.RightArrow, Keys.Right);
+            SendKeyIfChanged(ImGuiKey.UpArrow, Keys.Up);
+            SendKeyIfChanged(ImGuiKey.DownArrow, Keys.Down);
+            SendKeyIfChanged(ImGuiKey.PageUp, Keys.PageUp);
+            SendKeyIfChanged(ImGuiKey.PageDown, Keys.PageDown);
+            SendKeyIfChanged(ImGuiKey.Home, Keys.Home);
+            SendKeyIfChanged(ImGuiKey.End, Keys.End);
+            SendKeyIfChanged(ImGuiKey.Delete, Keys.Delete);
+            // Backspace with manual rate limiting
+            SendBackspaceWithRateLimit(keyboard);
+            SendKeyIfChanged(ImGuiKey.Enter, Keys.Enter);
+            SendKeyIfChanged(ImGuiKey.Escape, Keys.Escape);
+            SendKeyIfChanged(ImGuiKey.Space, Keys.Space);
+            SendKeyIfChanged(ImGuiKey.A, Keys.A);
+            SendKeyIfChanged(ImGuiKey.C, Keys.C);
+            SendKeyIfChanged(ImGuiKey.V, Keys.V);
+            SendKeyIfChanged(ImGuiKey.X, Keys.X);
+            SendKeyIfChanged(ImGuiKey.Y, Keys.Y);
+            SendKeyIfChanged(ImGuiKey.Z, Keys.Z);
+
+            // Modifiers - these need current state every frame for combinations to work
             io.AddKeyEvent(ImGuiKey.ModCtrl, keyboard.IsKeyDown(Keys.LeftControl) || keyboard.IsKeyDown(Keys.RightControl));
             io.AddKeyEvent(ImGuiKey.ModShift, keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift));
             io.AddKeyEvent(ImGuiKey.ModAlt, keyboard.IsKeyDown(Keys.LeftAlt) || keyboard.IsKeyDown(Keys.RightAlt));
+
+            _prevKeyboard = keyboard;
+        }
+
+        private void SendBackspaceWithRateLimit(KeyboardState keyboard)
+        {
+            var io = ImGui.GetIO();
+            bool isDown = keyboard.IsKeyDown(Keys.Back);
+
+            // Calculate delta time
+            var now = DateTime.Now;
+            float deltaTime = (float)(now - _lastFrameTime).TotalSeconds;
+            _lastFrameTime = now;
+            if (deltaTime > 0.1f) deltaTime = 0.016f; // Cap at ~60fps worth
+
+            if (isDown && !_backspaceWasDown)
+            {
+                // Just pressed - send immediately, start timer
+                io.AddKeyEvent(ImGuiKey.Backspace, true);
+                _backspaceTimer = BACKSPACE_INITIAL_DELAY;
+            }
+            else if (isDown && _backspaceWasDown)
+            {
+                // Held - only send when timer expires
+                _backspaceTimer -= deltaTime;
+                if (_backspaceTimer <= 0)
+                {
+                    // Send a press+release cycle to trigger one delete
+                    io.AddKeyEvent(ImGuiKey.Backspace, true);
+                    _backspaceTimer = BACKSPACE_REPEAT_RATE;
+                }
+                else
+                {
+                    // Keep key "up" while waiting
+                    io.AddKeyEvent(ImGuiKey.Backspace, false);
+                }
+            }
+            else if (!isDown && _backspaceWasDown)
+            {
+                // Just released
+                io.AddKeyEvent(ImGuiKey.Backspace, false);
+                _backspaceTimer = 0f;
+            }
+
+            _backspaceWasDown = isDown;
         }
 
         public void AddInputCharacter(char c)

@@ -185,6 +185,9 @@ namespace MapClickTeleport
 
             foreach (Keys key in Enum.GetValues(typeof(Keys)))
             {
+                // Skip backspace - handled in ImGuiRenderer with rate limiting
+                if (key == Keys.Back) continue;
+
                 bool isDown = keyboard.IsKeyDown(key);
                 bool wasDown = _prevKeyboard.IsKeyDown(key);
 
