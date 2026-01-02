@@ -9,6 +9,7 @@ using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Locations;
 using StardewValley.Menus;
+using StardewValley.Minigames;
 using SVector2 = System.Numerics.Vector2;
 using SVector4 = System.Numerics.Vector4;
 
@@ -55,6 +56,7 @@ namespace MapClickTeleport
         private bool _pvpEnabled = false;
         private int _pvpDamage = 20;
         private bool _pvpUseMonsterMethod = true;
+        private bool _mineCart = false;
 
         // Buff settings
         private int _buffSpeed = 0;
@@ -2385,6 +2387,29 @@ namespace MapClickTeleport
                     OPFeatures.AutoPickupRadius = _autoPickupRadius;
                 }
             }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            
+
+            // MiniGame Section
+            ImGui.TextColored(HeaderColor, "MiniGame");
+            ImGui.Spacing();
+            // speed run the bar's minigame: logic: override the vector, make the fall vector to 0 and forward vector very large
+            if (ImGui.Checkbox("MineCart MiniGame", ref _mineCart))
+            {
+                OPFeatures.MineCart = _mineCart;
+                OPFeatures.OnMineCartToggled(_mineCart); // Immediately restore collision when disabled
+                Game1.playSound(_noClip ? "powerup" : "cancel");
+                if (_mineCart)
+                    Game1.addHUDMessage(new HUDMessage("speed run enabled!", HUDMessage.newQuest_type));
+                else
+                    Game1.addHUDMessage(new HUDMessage("speed run disabled!", HUDMessage.achievement_type));
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Speed run minecart mini game");
 
             ImGui.Spacing();
             ImGui.Separator();

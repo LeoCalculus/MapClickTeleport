@@ -36,7 +36,7 @@ namespace MapClickTeleport
             // Initialize Harmony for all patches
             var harmony = new Harmony(this.ModManifest.UniqueID);
             HUDHider.ApplyPatches(harmony);
-            OPFeatures.ApplyPatches(harmony, Monitor);
+            OPFeatures.ApplyPatches(harmony, Monitor, Helper);
 
             helper.Events.Input.ButtonPressed += OnButtonPressed;
             helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;

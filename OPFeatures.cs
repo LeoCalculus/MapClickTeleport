@@ -6,6 +6,7 @@ using StardewValley;
 using StardewValley.Monsters;
 using StardewValley.TerrainFeatures;
 using StardewValley.Tools;
+using StardewValley.Minigames;
 
 namespace MapClickTeleport
 {
@@ -29,8 +30,10 @@ namespace MapClickTeleport
         public static bool PVPEnabled { get; set; } = false;
         public static int PVPDamage { get; set; } = 20;
         public static bool UseMonsterMethod { get; set; } = true; // Use invisible monster for real synced damage
+        public static bool MineCart {get; set; } = false; // minigame minecart
 
         private static IMonitor? _monitor;
+        private static IModHelper? _helper;
         private static int _lastSwingTick = 0;
 
 
@@ -38,9 +41,10 @@ namespace MapClickTeleport
         /// <summary>
         /// Apply all Harmony patches for OP features
         /// </summary>
-        public static void ApplyPatches(Harmony harmony, IMonitor monitor)
+        public static void ApplyPatches(Harmony harmony, IMonitor monitor, IModHelper helper)
         {
             _monitor = monitor;
+            _helper = helper;
 
             
 
@@ -322,6 +326,30 @@ namespace MapClickTeleport
             {
                 Game1.player.ignoreCollisions = false;
                 _wasNoClipEnabled = false;
+            }
+        }
+
+        public static void OnMineCartToggled(bool enabled)
+        {
+            if (!enabled && Game1.player.currentLocation.Name.StartsWith("Saloon")) // check if player in saloon note
+            {
+                
+                if (Game1.currentMinigame is MineCart mineCartGame && _helper != null) 
+                {
+                    var playerField = _helper.Reflection.GetField<object>(mineCartGame, "player");
+                    object playerValue = playerField.GetValue();
+
+                    if (playerValue != null)
+                    {
+                        var velocityField = _helper.Reflection.GetField<Vector2>(playerValue, "velocity");
+                        Vector2 currentVelcity = velocityField.GetValue();
+                        currentVelcity.X += 10000.0f;
+                        velocityField.SetValue(currentVelcity);
+                        
+                    }
+
+                }
+                
             }
         }
 
