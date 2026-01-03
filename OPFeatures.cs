@@ -30,7 +30,9 @@ namespace MapClickTeleport
         public static bool PVPEnabled { get; set; } = false;
         public static int PVPDamage { get; set; } = 20;
         public static bool UseMonsterMethod { get; set; } = true; // Use invisible monster for real synced damage
-        public static bool MineCart {get; set; } = false; // minigame minecart
+        public static bool MineCartHack {get; set; } = false; // minigame minecart
+        private static bool _hasBoosted = false;
+        private static bool _enableMineCartHack = false;
 
         private static IMonitor? _monitor;
         private static IModHelper? _helper;
@@ -162,6 +164,34 @@ namespace MapClickTeleport
             if (PVPEnabled)
             {
                 DamageNearbyFarmers();
+            }
+            // update the minecart logic here by checking toggle:
+            
+            if (MineCartHack)
+            {
+                if (Game1.currentMinigame is StardewValley.Minigames.MineCart mineCartGame && _helper != null)
+                {
+                    if (!_hasBoosted)
+                    {
+                        var playerField = _helper.Reflection.GetField<object>(mineCartGame, "player");
+                        object playerValue = playerField.GetValue();
+
+                        if (playerValue != null)
+                        {
+                            var velocityField = _helper.Reflection.GetField<Vector2>(playerValue, "velocity");
+                            Vector2 v = velocityField.GetValue();
+                            v.X += 20000.0f; 
+                            v.Y = 0.0f; // override the gravity
+                            velocityField.SetValue(v);
+
+                            _hasBoosted = true; 
+                            
+                        }
+                    }
+                } else
+                {
+                    _hasBoosted = false;
+                }
             }
         }
 
@@ -331,25 +361,10 @@ namespace MapClickTeleport
 
         public static void OnMineCartToggled(bool enabled)
         {
-            if (!enabled && Game1.player.currentLocation.Name.StartsWith("Saloon")) // check if player in saloon note
+            _enableMineCartHack = enabled;
+            if (!enabled)
             {
-                
-                if (Game1.currentMinigame is MineCart mineCartGame && _helper != null) 
-                {
-                    var playerField = _helper.Reflection.GetField<object>(mineCartGame, "player");
-                    object playerValue = playerField.GetValue();
-
-                    if (playerValue != null)
-                    {
-                        var velocityField = _helper.Reflection.GetField<Vector2>(playerValue, "velocity");
-                        Vector2 currentVelcity = velocityField.GetValue();
-                        currentVelcity.X += 10000.0f;
-                        velocityField.SetValue(currentVelcity);
-                        
-                    }
-
-                }
-                
+                _hasBoosted = false; // reset so it can boost again next time
             }
         }
 

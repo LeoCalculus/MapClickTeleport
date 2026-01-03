@@ -37,6 +37,7 @@ namespace MapClickTeleport
             var harmony = new Harmony(this.ModManifest.UniqueID);
             HUDHider.ApplyPatches(harmony);
             OPFeatures.ApplyPatches(harmony, Monitor, Helper);
+            MonsterDropPatches.ApplyPatches(harmony);
 
             helper.Events.Input.ButtonPressed += OnButtonPressed;
             helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;

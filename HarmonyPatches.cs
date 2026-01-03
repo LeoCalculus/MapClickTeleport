@@ -1,8 +1,10 @@
+using System.Linq;
+using System.Text;
 using HarmonyLib;
-using StardewValley;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using System.Text;
+using StardewValley;
+using StardewValley.Monsters;
 
 namespace MapClickTeleport
 {
@@ -376,6 +378,153 @@ namespace MapClickTeleport
             if (HideEntireHUD)
             {
                 Game1.displayHUD = true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Harmony patches for monster drop modifications.
+    /// Patches GameLocation.monsterDrop to modify drop chance and amount.
+    /// </summary>
+    public static class MonsterDropPatches
+    {
+        public static void ApplyPatches(Harmony harmony)
+        {
+            // Patch monsterDrop to modify drop behavior
+            harmony.Patch(
+                original: AccessTools.Method(typeof(GameLocation), nameof(GameLocation.monsterDrop)),
+                prefix: new HarmonyMethod(typeof(MonsterDropPatches), nameof(MonsterDrop_Prefix)),
+                postfix: new HarmonyMethod(typeof(MonsterDropPatches), nameof(MonsterDrop_Postfix))
+            );
+
+            // Patch MineShaft.populateLevel for spawn rate in mines
+            var mineShaftType = AccessTools.TypeByName("StardewValley.Locations.MineShaft");
+            if (mineShaftType != null)
+            {
+                var populateMethod = AccessTools.Method(mineShaftType, "populateLevel");
+                if (populateMethod != null)
+                {
+                    harmony.Patch(
+                        original: populateMethod,
+                        postfix: new HarmonyMethod(typeof(MonsterDropPatches), nameof(PopulateLevel_Postfix))
+                    );
+                }
+            }
+        }
+
+        /// <summary>
+        /// Prefix patch for monsterDrop - modifies drop chance by manipulating luck temporarily
+        /// </summary>
+        private static void MonsterDrop_Prefix(Monster monster, int x, int y, Farmer who, ref double __state)
+        {
+            // Store original daily luck to restore later
+            __state = Game1.player.team.sharedDailyLuck.Value;
+            
+            // Increase luck to boost drop chance if multiplier > 1
+            float dropMult = ImGuiMenu.MonsterDropChanceMultiplier;
+            if (dropMult > 1f)
+            {
+                // Boost daily luck to increase drop probability
+                Game1.player.team.sharedDailyLuck.Value += (dropMult - 1f) * 0.1;
+            }
+        }
+
+        /// <summary>
+        /// Postfix patch for monsterDrop - adds bonus items and restores luck
+        /// </summary>
+        private static void MonsterDrop_Postfix(Monster monster, int x, int y, Farmer who, double __state)
+        {
+            // Restore original luck
+            Game1.player.team.sharedDailyLuck.Value = __state;
+
+            // Add bonus drops based on MonsterDropAmountBonus
+            int bonusDrops = ImGuiMenu.MonsterDropAmountBonus;
+            if (bonusDrops > 0 && monster != null)
+            {
+                // Get the monster's drop list and spawn extra items
+                var location = monster.currentLocation ?? Game1.currentLocation;
+                if (location != null)
+                {
+                    // Spawn additional copies of common monster drops
+                    for (int i = 0; i < bonusDrops; i++)
+                    {
+                        // Try to spawn monster-specific loot
+                        var extraLoot = monster.objectsToDrop;
+                        if (extraLoot != null && extraLoot.Count > 0)
+                        {
+                            foreach (var itemId in extraLoot)
+                            {
+                                if (Game1.random.NextDouble() < 0.5) // 50% chance per bonus
+                                {
+                                    try
+                                    {
+                                        // Skip invalid/special item IDs (negative numbers, etc.)
+                                        if (string.IsNullOrEmpty(itemId)) continue;
+                                        if (int.TryParse(itemId, out int numericId) && numericId < 0) continue;
+                                        
+                                        var item = ItemRegistry.Create(itemId, allowNull: true);
+                                        if (item != null)
+                                        {
+                                            Game1.createItemDebris(
+                                                item,
+                                                new Vector2(x, y),
+                                                Game1.random.Next(4),
+                                                location
+                                            );
+                                        }
+                                    }
+                                    catch
+                                    {
+                                        // Skip items that fail to create
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Postfix for MineShaft.populateLevel - spawns extra monsters based on spawn rate multiplier
+        /// </summary>
+        private static void PopulateLevel_Postfix(GameLocation __instance)
+        {
+            float spawnMult = ImGuiMenu.MonsterSpawnRateMultiplier;
+            if (spawnMult <= 1f) return;
+
+            // Count existing monsters and spawn extras
+            var existingMonsters = __instance.characters.OfType<Monster>().ToList();
+            int extraSpawns = (int)((spawnMult - 1f) * existingMonsters.Count);
+
+            for (int i = 0; i < extraSpawns && existingMonsters.Count > 0; i++)
+            {
+                // Clone a random existing monster type at a nearby position
+                var templateMonster = existingMonsters[Game1.random.Next(existingMonsters.Count)];
+                var newPos = templateMonster.Position + new Vector2(
+                    Game1.random.Next(-128, 129),
+                    Game1.random.Next(-128, 129)
+                );
+
+                // Check if position is valid using simple passability check
+                var tilePos = new Vector2((int)(newPos.X / 64), (int)(newPos.Y / 64));
+                if (__instance.isTilePassable(new xTile.Dimensions.Location((int)tilePos.X, (int)tilePos.Y), Game1.viewport))
+                {
+                    try
+                    {
+                        // Create monster of same type
+                        var monsterType = templateMonster.GetType();
+                        var newMonster = (Monster?)Activator.CreateInstance(monsterType, newPos);
+                        if (newMonster != null)
+                        {
+                            __instance.characters.Add(newMonster);
+                        }
+                    }
+                    catch
+                    {
+                        // Some monsters may not have simple constructors, skip them
+                    }
+                }
             }
         }
     }

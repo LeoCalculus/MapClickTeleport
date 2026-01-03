@@ -67,6 +67,22 @@ namespace MapClickTeleport
         private float _buffCritPower = 0;
         private int _buffDuration = 0; // 0 = endless
         private bool _isInvincible = false;
+        
+        // Skill buff settings (farming, fishing, mining, foraging)
+        private int _buffFarming = 0;
+        private int _buffFishing = 0;
+        private int _buffMining = 0;
+        private int _buffForaging = 0;
+        private int _buffMaxStamina = 0;
+        private int _buffMagneticRadius = 0;
+
+        // Monster drop multipliers (controlled via Harmony patch on GameLocation.monsterDrop)
+        public static float MonsterDropChanceMultiplier { get; set; } = 1.0f;
+        public static int MonsterDropAmountBonus { get; set; } = 0;
+        public static float MonsterSpawnRateMultiplier { get; set; } = 1.0f;
+        private int _monsterDropChance = 1;
+        private int _monsterDropAmount = 0;
+        private int _monsterSpawnRate = 1;
 
         // Relations
         private string _relationsSearch = "";
@@ -165,6 +181,11 @@ namespace MapClickTeleport
             _oneHitKill = OPFeatures.OneHitKill;
             _infiniteStamina = OPFeatures.InfiniteStamina;
             _infiniteHealth = OPFeatures.InfiniteHealth;
+
+            // Sync monster drop controls (convert multiplier back to slider value)
+            _monsterDropChance = (int)(MonsterDropChanceMultiplier * 10f);
+            _monsterDropAmount = MonsterDropAmountBonus;
+            _monsterSpawnRate = (int)(MonsterSpawnRateMultiplier * 10f);
             _noClip = OPFeatures.NoClip;
             _instantCatch = OPFeatures.InstantCatch;
             _autoPickup = OPFeatures.AutoPickup;
@@ -1363,70 +1384,85 @@ namespace MapClickTeleport
             ImGui.Spacing();
 
             // Use a table layout for better organization
-            float inputWidth = 120f;
-            float columnWidth = 120f;
+            float inputWidth = 100f;
+            float columnWidth = 130f;
 
             // Row 1: Speed, Defense
-            ImGui.BeginGroup();
-            ImGui.SameLine();
             ImGui.Text("Speed");
-            ImGui.SameLine(columnWidth-60);
+            ImGui.SameLine(80);
             ImGui.SetNextItemWidth(inputWidth);
             ImGui.InputInt("##Speed", ref _buffSpeed);
-
-            ImGui.SameLine(columnWidth*2);
+            ImGui.SameLine(columnWidth + 80);
             ImGui.Text("Defense");
-            ImGui.SameLine(columnWidth*3-60);
+            ImGui.SameLine(columnWidth + 160);
             ImGui.SetNextItemWidth(inputWidth);
             ImGui.InputInt("##Defense", ref _buffDefense);
-            ImGui.EndGroup();
-            ImGui.Spacing();
 
-            // row 2: attack and luck
-            ImGui.BeginGroup();
-            ImGui.SameLine();
+            // Row 2: Attack, Luck
             ImGui.Text("Attack");
-            ImGui.SameLine(columnWidth-60);
+            ImGui.SameLine(80);
             ImGui.SetNextItemWidth(inputWidth);
             ImGui.InputInt("##Attack", ref _buffAttack);
-            
-            ImGui.SameLine(columnWidth * 2);
+            ImGui.SameLine(columnWidth + 80);
             ImGui.Text("Luck");
-            ImGui.SameLine(columnWidth * 3-60);
+            ImGui.SameLine(columnWidth + 160);
             ImGui.SetNextItemWidth(inputWidth);
             ImGui.InputInt("##Luck", ref _buffLuck);
 
-            ImGui.EndGroup();
+            // Row 3: Farming, Fishing
+            ImGui.Text("Farming");
+            ImGui.SameLine(80);
+            ImGui.SetNextItemWidth(inputWidth);
+            ImGui.InputInt("##Farming", ref _buffFarming);
+            ImGui.SameLine(columnWidth + 80);
+            ImGui.Text("Fishing");
+            ImGui.SameLine(columnWidth + 160);
+            ImGui.SetNextItemWidth(inputWidth);
+            ImGui.InputInt("##Fishing", ref _buffFishing);
+
+            // Row 4: Mining, Foraging
+            ImGui.Text("Mining");
+            ImGui.SameLine(80);
+            ImGui.SetNextItemWidth(inputWidth);
+            ImGui.InputInt("##Mining", ref _buffMining);
+            ImGui.SameLine(columnWidth + 80);
+            ImGui.Text("Foraging");
+            ImGui.SameLine(columnWidth + 160);
+            ImGui.SetNextItemWidth(inputWidth);
+            ImGui.InputInt("##Foraging", ref _buffForaging);
+
+            // Row 5: MaxStamina, MagneticRadius
+            ImGui.Text("MaxStamina");
+            ImGui.SameLine(80);
+            ImGui.SetNextItemWidth(inputWidth);
+            ImGui.InputInt("##MaxStamina", ref _buffMaxStamina);
+            ImGui.SameLine(columnWidth + 80);
+            ImGui.Text("Magnet");
+            ImGui.SameLine(columnWidth + 160);
+            ImGui.SetNextItemWidth(inputWidth);
+            ImGui.InputInt("##Magnet", ref _buffMagneticRadius);
+
             ImGui.Spacing();
 
-            // Row 3: Crit Chance, Crit Power
-            ImGui.BeginGroup();
-
+            // Row 6: Crit Chance, Crit Power
             ImGui.Text("Crit Chance");
-            ImGui.SameLine(columnWidth);
+            ImGui.SameLine(80);
             ImGui.SetNextItemWidth(inputWidth);
             ImGui.SliderFloat("##CritChance", ref _buffCritChance, 0f, 100f, "%.0f%%");
-
-            ImGui.SameLine(columnWidth*2);
+            ImGui.SameLine(columnWidth + 80);
             ImGui.Text("Crit Power");
-            ImGui.SameLine(columnWidth*3);
+            ImGui.SameLine(columnWidth + 160);
             ImGui.SetNextItemWidth(inputWidth);
             ImGui.SliderFloat("##CritPower", ref _buffCritPower, 0f, 999f, "%.0f%%");
-            ImGui.EndGroup();
-            ImGui.Spacing();
 
-            // row 4: duration
-            ImGui.BeginGroup();
-            ImGui.SameLine();
+            // Row 7: Duration
             ImGui.Text("Duration");
-            ImGui.SameLine(columnWidth);
+            ImGui.SameLine(80);
             ImGui.SetNextItemWidth(inputWidth);
             ImGui.InputInt("##Duration", ref _buffDuration);
             _buffDuration = Math.Max(0, _buffDuration);
             ImGui.SameLine();
-            ImGui.TextColored(new SVector4(0.6f, 0.6f, 0.6f, 1f), _buffDuration == 0 ? "(infinity)" : "sec");
-
-            ImGui.EndGroup();
+            ImGui.TextColored(new SVector4(0.6f, 0.6f, 0.6f, 1f), _buffDuration == 0 ? "(endless)" : "sec");
             ImGui.Spacing();
 
             // Duration presets
@@ -1569,11 +1605,87 @@ namespace MapClickTeleport
                             if (buff.effects.Attack.Value != 0) ImGui.Text($"Attack: {buff.effects.Attack.Value:+#;-#;0}");
                             if (buff.effects.Defense.Value != 0) ImGui.Text($"Defense: {buff.effects.Defense.Value:+#;-#;0}");
                             if (buff.effects.LuckLevel.Value != 0) ImGui.Text($"Luck: {buff.effects.LuckLevel.Value:+#;-#;0}");
+                            if (buff.effects.FarmingLevel.Value != 0) ImGui.Text($"Farming: {buff.effects.FarmingLevel.Value:+#;-#;0}");
+                            if (buff.effects.FishingLevel.Value != 0) ImGui.Text($"Fishing: {buff.effects.FishingLevel.Value:+#;-#;0}");
+                            if (buff.effects.MiningLevel.Value != 0) ImGui.Text($"Mining: {buff.effects.MiningLevel.Value:+#;-#;0}");
+                            if (buff.effects.ForagingLevel.Value != 0) ImGui.Text($"Foraging: {buff.effects.ForagingLevel.Value:+#;-#;0}");
+                            if (buff.effects.MaxStamina.Value != 0) ImGui.Text($"MaxStamina: {buff.effects.MaxStamina.Value:+#;-#;0}");
+                            if (buff.effects.MagneticRadius.Value != 0) ImGui.Text($"MagnetRadius: {buff.effects.MagneticRadius.Value:+#;-#;0}");
                             ImGui.EndTooltip();
                         }
                     }
                 }
                 ImGui.EndChild();
+            }
+
+            // Monster Drop Controls Section
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+            ImGui.TextColored(HeaderColor, "Monster Drop Controls");
+            ImGui.TextColored(new SVector4(0.6f, 0.6f, 0.6f, 1f), "Patches GameLocation.monsterDrop");
+            ImGui.Spacing();
+            ImGui.Spacing();
+
+            float labelWidth = 110f;
+            float sliderWidth = 180f;
+
+            // Drop Chance (0-100)
+            ImGui.Text("Drop Chance");
+            ImGui.SameLine(labelWidth);
+            ImGui.SetNextItemWidth(sliderWidth);
+            if (ImGui.SliderInt("##DropChance", ref _monsterDropChance, 0, 100, "%d%%"))
+            {
+                MonsterDropChanceMultiplier = _monsterDropChance / 100f * 10f; // 0-100% maps to 0-10x
+            }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("1##DC")) { _monsterDropChance = 1; MonsterDropChanceMultiplier = 0.1f; }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("50##DC")) { _monsterDropChance = 50; MonsterDropChanceMultiplier = 5f; }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("100##DC")) { _monsterDropChance = 100; MonsterDropChanceMultiplier = 10f; }
+
+            // Drop Amount (0-100)
+            ImGui.Text("Drop Amount");
+            ImGui.SameLine(labelWidth);
+            ImGui.SetNextItemWidth(sliderWidth);
+            if (ImGui.SliderInt("##DropAmount", ref _monsterDropAmount, 0, 100, "+%d"))
+            {
+                MonsterDropAmountBonus = _monsterDropAmount;
+            }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("0##DA")) { _monsterDropAmount = 0; MonsterDropAmountBonus = 0; }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("10##DA")) { _monsterDropAmount = 10; MonsterDropAmountBonus = 10; }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("50##DA")) { _monsterDropAmount = 50; MonsterDropAmountBonus = 50; }
+
+            // Spawn Rate (0-100)
+            ImGui.Text("Spawn Rate");
+            ImGui.SameLine(labelWidth);
+            ImGui.SetNextItemWidth(sliderWidth);
+            if (ImGui.SliderInt("##SpawnRate", ref _monsterSpawnRate, 0, 100, "%d%%"))
+            {
+                MonsterSpawnRateMultiplier = _monsterSpawnRate / 100f * 10f; // 0-100% maps to 0-10x
+            }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("1##SR")) { _monsterSpawnRate = 1; MonsterSpawnRateMultiplier = 0.1f; }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("50##SR")) { _monsterSpawnRate = 50; MonsterSpawnRateMultiplier = 5f; }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("100##SR")) { _monsterSpawnRate = 100; MonsterSpawnRateMultiplier = 10f; }
+
+            // Reset all monster controls
+            ImGui.Spacing();
+            if (ImGui.Button("Reset Monster Controls", new SVector2(200, 0)))
+            {
+                _monsterDropChance = 1;
+                _monsterDropAmount = 0;
+                _monsterSpawnRate = 1;
+                MonsterDropChanceMultiplier = 0.1f;
+                MonsterDropAmountBonus = 0;
+                MonsterSpawnRateMultiplier = 0.1f;
+                Game1.playSound("cancel");
             }
         }
 
@@ -1597,15 +1709,23 @@ namespace MapClickTeleport
         {
             var effects = new StardewValley.Buffs.BuffEffects();
 
-            // Standard buffs - these are additive
+            // Combat buffs
             effects.Speed.Value = _buffSpeed;
             effects.Defense.Value = _buffDefense;
             effects.Attack.Value = _buffAttack;
             effects.LuckLevel.Value = _buffLuck;
 
-            // Crit buffs - these need to be added to the player's existing values
-            // CriticalChanceMultiplier and CriticalPowerMultiplier are MULTIPLIERS (1.0 = 100%)
-            // So +50% crit chance means 0.5 added to the multiplier
+            // Skill buffs (farming, fishing, mining, foraging)
+            effects.FarmingLevel.Value = _buffFarming;
+            effects.FishingLevel.Value = _buffFishing;
+            effects.MiningLevel.Value = _buffMining;
+            effects.ForagingLevel.Value = _buffForaging;
+
+            // Other buffs
+            effects.MaxStamina.Value = _buffMaxStamina;
+            effects.MagneticRadius.Value = _buffMagneticRadius;
+
+            // Crit buffs - these are multipliers
             if (_buffCritChance > 0)
             {
                 effects.CriticalChanceMultiplier.Value = _buffCritChance;
@@ -2400,9 +2520,9 @@ namespace MapClickTeleport
             // speed run the bar's minigame: logic: override the vector, make the fall vector to 0 and forward vector very large
             if (ImGui.Checkbox("MineCart MiniGame", ref _mineCart))
             {
-                OPFeatures.MineCart = _mineCart;
+                OPFeatures.MineCartHack = _mineCart;
                 OPFeatures.OnMineCartToggled(_mineCart); // Immediately restore collision when disabled
-                Game1.playSound(_noClip ? "powerup" : "cancel");
+                Game1.playSound(_mineCart ? "powerup" : "cancel");
                 if (_mineCart)
                     Game1.addHUDMessage(new HUDMessage("speed run enabled!", HUDMessage.newQuest_type));
                 else
