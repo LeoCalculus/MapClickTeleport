@@ -84,6 +84,10 @@ namespace MapClickTeleport
         private int _monsterDropAmount = 0;
         private int _monsterSpawnRate = 1;
 
+        // Fishing controls
+        public static int FishCatchChance { get; set; } = 0; // 0 = default game behavior, 1-100 = force fish chance
+        private int _fishCatchChance = 0;
+
         // Relations
         private string _relationsSearch = "";
         private bool _doorBypassEnabled = false;
@@ -186,6 +190,9 @@ namespace MapClickTeleport
             _monsterDropChance = (int)(MonsterDropChanceMultiplier * 10f);
             _monsterDropAmount = MonsterDropAmountBonus;
             _monsterSpawnRate = (int)(MonsterSpawnRateMultiplier * 10f);
+
+            // Sync fishing controls
+            _fishCatchChance = FishCatchChance;
             _noClip = OPFeatures.NoClip;
             _instantCatch = OPFeatures.InstantCatch;
             _autoPickup = OPFeatures.AutoPickup;
@@ -1686,6 +1693,39 @@ namespace MapClickTeleport
                 MonsterDropAmountBonus = 0;
                 MonsterSpawnRateMultiplier = 0.1f;
                 Game1.playSound("cancel");
+            }
+
+            // Fishing Controls Section
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+            ImGui.TextColored(HeaderColor, "Fishing Controls");
+            ImGui.TextColored(new SVector4(0.6f, 0.6f, 0.6f, 1f), "Patches GameLocation.getFish");
+            ImGui.Spacing();
+            ImGui.Spacing();
+
+            // Fish Catch Chance (0 = default, 1-100 = force fish)
+            ImGui.Text("Fish Chance");
+            ImGui.SameLine(labelWidth);
+            ImGui.SetNextItemWidth(sliderWidth);
+            if (ImGui.SliderInt("##FishChance", ref _fishCatchChance, 0, 100, _fishCatchChance == 0 ? "Default" : "%d%%"))
+            {
+                FishCatchChance = _fishCatchChance;
+            }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("0##FC")) { _fishCatchChance = 0; FishCatchChance = 0; }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("50##FC")) { _fishCatchChance = 50; FishCatchChance = 50; }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("100##FC")) { _fishCatchChance = 100; FishCatchChance = 100; }
+
+            if (_fishCatchChance > 0)
+            {
+                ImGui.TextColored(new SVector4(0.5f, 1f, 0.5f, 1f), $"  {_fishCatchChance}% chance to catch fish instead of trash");
+            }
+            else
+            {
+                ImGui.TextColored(new SVector4(0.6f, 0.6f, 0.6f, 1f), "  Using default game fishing logic");
             }
         }
 

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using HarmonyLib;
@@ -525,6 +526,114 @@ namespace MapClickTeleport
                         // Some monsters may not have simple constructors, skip them
                     }
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Harmony patches for fishing modifications.
+    /// Patches GameLocation.getFish to control fish vs trash chance.
+    /// </summary>
+    public static class FishingPatches
+    {
+        // List of trash item IDs to detect and potentially replace
+        private static readonly HashSet<string> TrashItemIds = new()
+        {
+            "(O)168", "(O)169", "(O)170", "(O)171", "(O)172", // Trash, Driftwood, Broken Glasses, Broken CD, Soggy Newspaper
+            "168", "169", "170", "171", "172"
+        };
+
+        // Track recursion to prevent infinite loops
+        private static bool _isRetrying = false;
+
+        public static void ApplyPatches(Harmony harmony)
+        {
+            // Patch getFish to modify catch results
+            harmony.Patch(
+                original: AccessTools.Method(typeof(GameLocation), nameof(GameLocation.getFish)),
+                postfix: new HarmonyMethod(typeof(FishingPatches), nameof(GetFish_Postfix))
+            );
+        }
+
+        /// <summary>
+        /// Postfix for getFish - replaces trash with fish based on FishCatchChance setting
+        /// </summary>
+        private static void GetFish_Postfix(GameLocation __instance, ref Item __result, 
+            float millisecondsAfterNibble, string bait, int waterDepth, Farmer who, 
+            double baitPotency, Vector2 bobberTile)
+        {
+            int fishChance = ImGuiMenu.FishCatchChance;
+            if (fishChance <= 0) return; // Use default game behavior
+            if (__result == null) return;
+            if (_isRetrying) return; // Prevent recursion
+
+            // Check if the result is trash
+            string itemId = __result.QualifiedItemId ?? __result.ItemId ?? "";
+            bool isTrash = TrashItemIds.Contains(itemId) || 
+                           TrashItemIds.Contains(__result.ItemId ?? "");
+
+            if (isTrash)
+            {
+                // Roll to see if we should replace trash with fish
+                if (Game1.random.Next(100) < fishChance)
+                {
+                    // Try to get a real fish by calling getFish again with boosted luck
+                    var newFish = TryGetLocationFish(__instance, millisecondsAfterNibble, bait, waterDepth, who, baitPotency, bobberTile);
+                    if (newFish != null)
+                    {
+                        __result = newFish;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Attempts to get a fish from the location by retrying with boosted luck
+        /// </summary>
+        private static Item? TryGetLocationFish(GameLocation location, float millisecondsAfterNibble, 
+            string bait, int waterDepth, Farmer who, double baitPotency, Vector2 bobberTile)
+        {
+            try
+            {
+                _isRetrying = true;
+
+                // Save original luck
+                double originalLuck = Game1.player.team.sharedDailyLuck.Value;
+                int originalFishingLevel = who.FishingLevel;
+
+                // Boost luck and fishing level significantly to avoid trash
+                Game1.player.team.sharedDailyLuck.Value = 0.125; // Max daily luck
+                
+                // Try multiple times to get a non-trash fish
+                for (int attempt = 0; attempt < 10; attempt++)
+                {
+                    var fish = location.getFish(millisecondsAfterNibble, bait, waterDepth + 5, who, baitPotency + 1.0, bobberTile);
+                    
+                    if (fish != null)
+                    {
+                        string fishItemId = fish.QualifiedItemId ?? fish.ItemId ?? "";
+                        bool fishIsTrash = TrashItemIds.Contains(fishItemId) || 
+                                          TrashItemIds.Contains(fish.ItemId ?? "");
+                        
+                        if (!fishIsTrash)
+                        {
+                            // Restore original values
+                            Game1.player.team.sharedDailyLuck.Value = originalLuck;
+                            _isRetrying = false;
+                            return fish;
+                        }
+                    }
+                }
+
+                // Restore original values
+                Game1.player.team.sharedDailyLuck.Value = originalLuck;
+                _isRetrying = false;
+                return null;
+            }
+            catch
+            {
+                _isRetrying = false;
+                return null;
             }
         }
     }
