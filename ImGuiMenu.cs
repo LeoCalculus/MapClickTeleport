@@ -88,6 +88,10 @@ namespace MapClickTeleport
         public static int FishCatchChance { get; set; } = 0; // 0 = default game behavior, 1-100 = force fish chance
         private int _fishCatchChance = 0;
 
+        // Mining controls
+        public static int MineralDropBonus { get; set; } = 0; // 0-100 extra mineral drops
+        private int _mineralDropBonus = 0;
+
         // Relations
         private string _relationsSearch = "";
         private bool _doorBypassEnabled = false;
@@ -193,6 +197,9 @@ namespace MapClickTeleport
 
             // Sync fishing controls
             _fishCatchChance = FishCatchChance;
+
+            // Sync mining controls
+            _mineralDropBonus = MineralDropBonus;
             _noClip = OPFeatures.NoClip;
             _instantCatch = OPFeatures.InstantCatch;
             _autoPickup = OPFeatures.AutoPickup;
@@ -1727,6 +1734,39 @@ namespace MapClickTeleport
             {
                 ImGui.TextColored(new SVector4(0.6f, 0.6f, 0.6f, 1f), "  Using default game fishing logic");
             }
+
+            // Mining Controls Section
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+            ImGui.TextColored(HeaderColor, "Mining Controls");
+            ImGui.TextColored(new SVector4(0.6f, 0.6f, 0.6f, 1f), "Patches GameLocation.OnStoneDestroyed");
+            ImGui.Spacing();
+            ImGui.Spacing();
+
+            // Mineral Drop Bonus (0-100)
+            ImGui.Text("Mineral Drop+");
+            ImGui.SameLine(labelWidth);
+            ImGui.SetNextItemWidth(sliderWidth);
+            if (ImGui.SliderInt("##MineralDrop", ref _mineralDropBonus, 0, 100, "+%d"))
+            {
+                MineralDropBonus = _mineralDropBonus;
+            }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("0##MD")) { _mineralDropBonus = 0; MineralDropBonus = 0; }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("10##MD")) { _mineralDropBonus = 10; MineralDropBonus = 10; }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("50##MD")) { _mineralDropBonus = 50; MineralDropBonus = 50; }
+
+            if (_mineralDropBonus > 0)
+            {
+                ImGui.TextColored(new SVector4(0.5f, 1f, 0.5f, 1f), $"  +{_mineralDropBonus} extra minerals per rock");
+            }
+            else
+            {
+                ImGui.TextColored(new SVector4(0.6f, 0.6f, 0.6f, 1f), "  Using default mineral drops");
+            }
         }
 
         private void ApplyBuff(string type, int amount)
@@ -2587,6 +2627,7 @@ namespace MapClickTeleport
                 _infiniteStamina = true;
                 _infiniteHealth = true;
                 _instantCatch = true;
+                _mineCart = true;
                 
                 OPFeatures.OneHitKill = true;
                 OPFeatures.InstantMineRock = true;

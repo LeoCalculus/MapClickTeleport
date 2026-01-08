@@ -39,6 +39,7 @@ namespace MapClickTeleport
             OPFeatures.ApplyPatches(harmony, Monitor, Helper);
             MonsterDropPatches.ApplyPatches(harmony);
             FishingPatches.ApplyPatches(harmony);
+            MiningPatches.ApplyPatches(harmony);
 
             helper.Events.Input.ButtonPressed += OnButtonPressed;
             helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;

@@ -63,7 +63,7 @@ namespace MapClickTeleport
             );
 
             // Patch ALL SpriteBatch.Draw overloads
-            
+
             // 1. Draw(Texture2D, Vector2, Rectangle?, Color, float, Vector2, float, SpriteEffects, float)
             harmony.Patch(
                 original: AccessTools.Method(typeof(SpriteBatch), nameof(SpriteBatch.Draw),
@@ -197,7 +197,7 @@ namespace MapClickTeleport
         {
             int w = Game1.uiViewport.Width;
             int h = Game1.uiViewport.Height;
-            
+
             // Stamina bar is in the rightmost ~70 pixels, bottom ~500 pixels
             return pos.X > w - 180 && pos.Y < h; // originally 70 for x
         }
@@ -206,7 +206,7 @@ namespace MapClickTeleport
         {
             int w = Game1.uiViewport.Width;
             int h = Game1.uiViewport.Height;
-            
+
             return rect.X > w - 180 && rect.Y < h;
         }
 
@@ -420,7 +420,7 @@ namespace MapClickTeleport
         {
             // Store original daily luck to restore later
             __state = Game1.player.team.sharedDailyLuck.Value;
-            
+
             // Increase luck to boost drop chance if multiplier > 1
             float dropMult = ImGuiMenu.MonsterDropChanceMultiplier;
             if (dropMult > 1f)
@@ -462,7 +462,7 @@ namespace MapClickTeleport
                                         // Skip invalid/special item IDs (negative numbers, etc.)
                                         if (string.IsNullOrEmpty(itemId)) continue;
                                         if (int.TryParse(itemId, out int numericId) && numericId < 0) continue;
-                                        
+
                                         var item = ItemRegistry.Create(itemId, allowNull: true);
                                         if (item != null)
                                         {
@@ -558,8 +558,8 @@ namespace MapClickTeleport
         /// <summary>
         /// Postfix for getFish - replaces trash with fish based on FishCatchChance setting
         /// </summary>
-        private static void GetFish_Postfix(GameLocation __instance, ref Item __result, 
-            float millisecondsAfterNibble, string bait, int waterDepth, Farmer who, 
+        private static void GetFish_Postfix(GameLocation __instance, ref Item __result,
+            float millisecondsAfterNibble, string bait, int waterDepth, Farmer who,
             double baitPotency, Vector2 bobberTile)
         {
             int fishChance = ImGuiMenu.FishCatchChance;
@@ -569,7 +569,7 @@ namespace MapClickTeleport
 
             // Check if the result is trash
             string itemId = __result.QualifiedItemId ?? __result.ItemId ?? "";
-            bool isTrash = TrashItemIds.Contains(itemId) || 
+            bool isTrash = TrashItemIds.Contains(itemId) ||
                            TrashItemIds.Contains(__result.ItemId ?? "");
 
             if (isTrash)
@@ -590,7 +590,7 @@ namespace MapClickTeleport
         /// <summary>
         /// Attempts to get a fish from the location by retrying with boosted luck
         /// </summary>
-        private static Item? TryGetLocationFish(GameLocation location, float millisecondsAfterNibble, 
+        private static Item? TryGetLocationFish(GameLocation location, float millisecondsAfterNibble,
             string bait, int waterDepth, Farmer who, double baitPotency, Vector2 bobberTile)
         {
             try
@@ -603,18 +603,18 @@ namespace MapClickTeleport
 
                 // Boost luck and fishing level significantly to avoid trash
                 Game1.player.team.sharedDailyLuck.Value = 0.125; // Max daily luck
-                
+
                 // Try multiple times to get a non-trash fish
                 for (int attempt = 0; attempt < 10; attempt++)
                 {
                     var fish = location.getFish(millisecondsAfterNibble, bait, waterDepth + 5, who, baitPotency + 1.0, bobberTile);
-                    
+
                     if (fish != null)
                     {
                         string fishItemId = fish.QualifiedItemId ?? fish.ItemId ?? "";
-                        bool fishIsTrash = TrashItemIds.Contains(fishItemId) || 
+                        bool fishIsTrash = TrashItemIds.Contains(fishItemId) ||
                                           TrashItemIds.Contains(fish.ItemId ?? "");
-                        
+
                         if (!fishIsTrash)
                         {
                             // Restore original values
@@ -634,6 +634,108 @@ namespace MapClickTeleport
             {
                 _isRetrying = false;
                 return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Harmony patches for mining modifications.
+    /// Patches GameLocation.OnStoneDestroyed to add extra mineral drops.
+    /// </summary>
+    public static class MiningPatches
+    {
+        // Mineral item IDs that can drop from rocks
+        private static readonly Dictionary<string, string[]> StoneToMineralMap = new()
+        {
+            // Iridium nodes
+            { "765", new[] { "(O)386" } }, // Iridium Node -> Iridium Ore
+            // Gold nodes
+            { "764", new[] { "(O)384" } }, // Gold Node -> Gold Ore
+            // Iron nodes
+            { "290", new[] { "(O)380" } }, // Iron Node -> Iron Ore
+            // Copper nodes
+            { "751", new[] { "(O)378" } }, // Copper Node -> Copper Ore
+            // Gem nodes
+            { "2", new[] { "(O)72", "(O)60", "(O)62", "(O)64", "(O)66", "(O)68", "(O)70" } }, // Diamond, Emerald, Aquamarine, Ruby, Topaz, Jade, Fire Quartz
+            { "4", new[] { "(O)72", "(O)60", "(O)62", "(O)64", "(O)66", "(O)68", "(O)70" } },
+            { "6", new[] { "(O)72", "(O)60", "(O)62", "(O)64", "(O)66", "(O)68", "(O)70" } },
+            // Mystic Stone
+            { "46", new[] { "(O)386", "(O)74" } }, // Iridium Ore, Prismatic Shard
+            // Radioactive nodes
+            { "95", new[] { "(O)909", "(O)910" } }, // Radioactive Ore, Radioactive Bar
+        };
+
+        // Common stone IDs that drop regular stone/geodes
+        private static readonly HashSet<string> CommonStoneIds = new()
+        {
+            "343", "450", "668", "670", "845", "846", "847" // Various stone types
+        };
+
+        public static void ApplyPatches(Harmony harmony)
+        {
+            // Patch OnStoneDestroyed to add extra mineral drops
+            harmony.Patch(
+                original: AccessTools.Method(typeof(GameLocation), nameof(GameLocation.OnStoneDestroyed)),
+                postfix: new HarmonyMethod(typeof(MiningPatches), nameof(OnStoneDestroyed_Postfix))
+            );
+        }
+
+        /// <summary>
+        /// Postfix for OnStoneDestroyed - adds bonus mineral drops based on MineralDropBonus setting
+        /// </summary>
+        private static void OnStoneDestroyed_Postfix(GameLocation __instance, string stoneId, int x, int y, Farmer who)
+        {
+            int bonusDrops = ImGuiMenu.MineralDropBonus;
+            if (bonusDrops <= 0) return;
+            if (who == null || __instance == null) return;
+
+            try
+            {
+                Vector2 tilePos = new Vector2(x, y);
+
+                // Check if this stone type has specific minerals
+                if (StoneToMineralMap.TryGetValue(stoneId, out string[]? minerals) && minerals != null)
+                {
+                    // Drop bonus minerals
+                    for (int i = 0; i < bonusDrops; i++)
+                    {
+                        string mineralId = minerals[Game1.random.Next(minerals.Length)];
+                        var item = ItemRegistry.Create(mineralId, allowNull: true);
+                        if (item != null)
+                        {
+                            Game1.createItemDebris(item, tilePos * 64f, Game1.random.Next(4), __instance);
+                        }
+                    }
+                }
+                else if (CommonStoneIds.Contains(stoneId))
+                {
+                    // For common stones, drop stone or coal
+                    for (int i = 0; i < bonusDrops; i++)
+                    {
+                        string dropId = Game1.random.NextDouble() < 0.1 ? "(O)382" : "(O)390"; // Coal or Stone
+                        var item = ItemRegistry.Create(dropId, allowNull: true);
+                        if (item != null)
+                        {
+                            Game1.createItemDebris(item, tilePos * 64f, Game1.random.Next(4), __instance);
+                        }
+                    }
+                }
+                else
+                {
+                    // For unknown stones, try to drop stone
+                    for (int i = 0; i < bonusDrops; i++)
+                    {
+                        var item = ItemRegistry.Create("(O)390", allowNull: true); // Stone
+                        if (item != null)
+                        {
+                            Game1.createItemDebris(item, tilePos * 64f, Game1.random.Next(4), __instance);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Silently fail if something goes wrong
             }
         }
     }
